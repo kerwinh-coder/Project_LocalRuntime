@@ -91,7 +91,7 @@ public sealed class FGOCharacterWorkbench : MonoBehaviour
         GUILayout.BeginArea(new Rect(12f, 12f, panelWidth, panelHeight), "FGO 角色工作台", GUI.skin.window);
         workbenchScroll = GUILayout.BeginScrollView(workbenchScroll, GUILayout.Width(panelWidth - 12f), GUILayout.Height(panelHeight - 30f));
 
-        GUILayout.Label("加载原始角色资源，并管理灵基、灵衣与原生动作。");
+        GUILayout.Label("v" + WorkbenchVersion + " · 加载原始角色资源，并管理灵基、灵衣与原生动作。");
         GUILayout.Label("资源来源", GUI.skin.box);
         GUILayout.BeginHorizontal();
         GUI.enabled = !loading && !scanningLocalAssets;
