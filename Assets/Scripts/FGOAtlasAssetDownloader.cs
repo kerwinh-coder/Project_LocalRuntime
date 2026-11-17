@@ -457,9 +457,15 @@ public sealed class FGOAtlasAssetDownloader : MonoBehaviour
                 string valueString = pair.Value as string;
                 if (valueString != null)
                 {
-                    if (LooksLikeAssetPath(valueString) &&
-                        pair.Key.IndexOf("type", StringComparison.OrdinalIgnoreCase) < 0 &&
-                        pair.Key.IndexOf("kind", StringComparison.OrdinalIgnoreCase) < 0)
+                    bool isTypeField = pair.Key.IndexOf("type", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                        pair.Key.IndexOf("kind", StringComparison.OrdinalIgnoreCase) >= 0;
+                    // Atlas manifests may identify a Modified Unity3D bundle by type
+                    // while providing a bare relative path such as "2501700".
+                    // Accept that path only when the manifest explicitly marks it as a bundle.
+                    bool isTypedBundlePath = pairKind == "bundle" &&
+                                             pair.Key.Equals("path", StringComparison.OrdinalIgnoreCase);
+
+                    if (!isTypeField && (LooksLikeAssetPath(valueString) || isTypedBundlePath))
                     {
                         string inferred = InferKind(valueString, pairKind);
                         if (!string.IsNullOrEmpty(inferred))
