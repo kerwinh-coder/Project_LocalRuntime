@@ -62,7 +62,7 @@ public sealed class FGOCharacterWorkbench : MonoBehaviour
     private string localCatalogStatus = "尚未扫描本地资源目录。";
     private readonly List<LocalAssetEntry> localBundles = new List<LocalAssetEntry>();
     private const string LocalIndexFileName = "FGO_LocalAssetIndex.json";
-    private const string WorkbenchVersion = "0.3.2.3-preview1";
+    private const string WorkbenchVersion = "0.3.2.4-preview1";
     private string loadedBundleName = "";
     private FateServantContainer currentServant;
     private float playbackSpeed = 1f;
@@ -248,6 +248,14 @@ public sealed class FGOCharacterWorkbench : MonoBehaviour
         GUILayout.Label("灵衣切换：选择另一个灵衣的原始 Bundle / battleCharaId，再按上方“加载 / 替换”。");
     }
 
+    // Keep these native states in the original AnimationClips collection,
+    // but omit eye-only toggles from the user-facing action selector.
+    private static bool IsHiddenAnimationFromSelection(string animationName)
+    {
+        return string.Equals(animationName, "eye_open", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(animationName, "eye_close", StringComparison.OrdinalIgnoreCase);
+    }
+
     private void DrawAnimationControls()
     {
         if (currentServant == null) return;
@@ -264,6 +272,8 @@ public sealed class FGOCharacterWorkbench : MonoBehaviour
         foreach (SimpleAnimation.State state in currentServant.AnimationClips)
         {
             if (state == null || state.clip == null || string.IsNullOrEmpty(state.name)) continue;
+            if (IsHiddenAnimationFromSelection(state.name)) continue;
+
             if (GUILayout.Button(state.name + "   " + state.clip.length.ToString("0.00") + "s"))
             {
                 try
