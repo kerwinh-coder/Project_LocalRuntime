@@ -1,0 +1,7 @@
+<linker>
+    <assembly fullname="UnityEngine">            
+        <type fullname="UnityEngine.SkinnedMeshRenderer" preserve="all"/>
+        <type fullname="UnityEngine.Avatar" preserve="all"/>
+        <type fullname="UnityEngine.Animation" preserve="all"/>
+    </assembly>
+</linker>
