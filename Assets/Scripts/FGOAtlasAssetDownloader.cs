@@ -40,6 +40,7 @@ public sealed class FGOAtlasAssetDownloader : MonoBehaviour
     private Vector2 entriesScroll;
     private Vector2 downloadedScroll;
     private GUIStyle wrappedLabelStyle;
+    private GUIStyle wrappedBoxStyle;
     private string region = "JP";
     private string servantId = "100100";
     private string downloadRoot = "";
@@ -73,11 +74,14 @@ public sealed class FGOAtlasAssetDownloader : MonoBehaviour
         {
             wrappedLabelStyle = new GUIStyle(GUI.skin.label);
             wrappedLabelStyle.wordWrap = true;
+            wrappedBoxStyle = new GUIStyle(GUI.skin.box);
+            wrappedBoxStyle.wordWrap = true;
+            wrappedBoxStyle.alignment = TextAnchor.MiddleLeft;
         }
 
         GUILayout.BeginArea(area, "Atlas 资源下载", GUI.skin.window);
-        panelScroll = GUILayout.BeginScrollView(panelScroll, false, true, GUILayout.Width(width - 12f), GUILayout.Height(height - 34f));
-        GUILayout.Label("获取角色目录 → 选择灵基 / 灵衣 → 保存原始 Bundle 与纹理。");
+        panelScroll = GUILayout.BeginScrollView(panelScroll, false, true, GUIStyle.none, GUI.skin.verticalScrollbar, GUILayout.Width(width - 12f), GUILayout.Height(height - 34f));
+        GUILayout.Label("获取角色目录 → 选择灵基 / 灵衣 → 保存原始 Bundle 与纹理。", wrappedLabelStyle, GUILayout.ExpandWidth(true));
 
         GUILayout.BeginVertical("box");
         GUILayout.Label("① 角色资源目录");
@@ -102,7 +106,7 @@ public sealed class FGOAtlasAssetDownloader : MonoBehaviour
 
         GUILayout.BeginVertical("box");
         GUILayout.Label("② 保存位置");
-        GUILayout.Label("原始文件会按区域 / 角色 ID / 灵基或灵衣分类保存。");
+        GUILayout.Label("原始文件会按区域 / 角色 ID / 灵基或灵衣分类保存。", wrappedLabelStyle, GUILayout.ExpandWidth(true));
         downloadRoot = GUILayout.TextField(downloadRoot);
 #if UNITY_EDITOR
         GUILayout.BeginHorizontal();
@@ -120,7 +124,7 @@ public sealed class FGOAtlasAssetDownloader : MonoBehaviour
         if (busy)
         {
             GUILayout.BeginVertical("box");
-            GUILayout.Label(busyLabel);
+            GUILayout.Label(busyLabel, wrappedLabelStyle, GUILayout.ExpandWidth(true));
             Rect bar = GUILayoutUtility.GetRect(1f, 18f, GUILayout.ExpandWidth(true));
             GUI.Box(bar, GUIContent.none);
             Rect fill = new Rect(bar.x + 2f, bar.y + 2f, Mathf.Max(0f, (bar.width - 4f) * Mathf.Clamp01(progress)), bar.height - 4f);
@@ -133,13 +137,13 @@ public sealed class FGOAtlasAssetDownloader : MonoBehaviour
         }
 
         GUILayout.Label("运行状态", GUI.skin.box);
-        GUILayout.Label(status, GUI.skin.box);
+        GUILayout.Label(status, wrappedBoxStyle, GUILayout.MaxWidth(width - 40f));
 
         GUILayout.BeginVertical("box");
         GUILayout.Label("③ 可下载的角色形态");
         if (modelEntries.Count > 0)
         {
-            entriesScroll = GUILayout.BeginScrollView(entriesScroll, false, true, GUILayout.MinHeight(100f), GUILayout.MaxHeight(250f));
+            entriesScroll = GUILayout.BeginScrollView(entriesScroll, false, true, GUIStyle.none, GUI.skin.verticalScrollbar, GUILayout.MinHeight(100f), GUILayout.MaxHeight(250f));
             foreach (ModelEntry entry in modelEntries)
             {
                 GUILayout.BeginHorizontal("box");
@@ -158,17 +162,17 @@ public sealed class FGOAtlasAssetDownloader : MonoBehaviour
         }
         else
         {
-            GUILayout.Label("先输入角色 ID 并获取资源目录。若角色没有 spriteModel 数据，这里不会列出可下载项目。", GUI.skin.box);
+            GUILayout.Label("先输入角色 ID 并获取资源目录。若角色没有 spriteModel 数据，这里不会列出可下载项目。", wrappedBoxStyle, GUILayout.MaxWidth(width - 40f));
         }
         GUILayout.EndVertical();
 
         GUILayout.BeginVertical("box");
         GUILayout.Label("④ 已下载的原始 Bundle");
         if (downloadedBundles.Count == 0)
-            GUILayout.Label("这里会显示已下载并通过 Unity Bundle 文件头检查的角色资源。", GUI.skin.box);
+            GUILayout.Label("这里会显示已下载并通过 Unity Bundle 文件头检查的角色资源。", wrappedBoxStyle, GUILayout.MaxWidth(width - 40f));
         else
         {
-            downloadedScroll = GUILayout.BeginScrollView(downloadedScroll, false, true, GUILayout.MinHeight(60f), GUILayout.MaxHeight(180f));
+            downloadedScroll = GUILayout.BeginScrollView(downloadedScroll, false, true, GUIStyle.none, GUI.skin.verticalScrollbar, GUILayout.MinHeight(60f), GUILayout.MaxHeight(180f));
             for (int i = downloadedBundles.Count - 1; i >= 0; i--)
             {
                 string path = downloadedBundles[i];
