@@ -40,7 +40,6 @@ public sealed class FGOAtlasAssetDownloader : MonoBehaviour
     private Vector2 entriesScroll;
     private Vector2 downloadedScroll;
     private GUIStyle wrappedLabelStyle;
-    private GUIStyle wrappedBoxStyle;
     private string region = "JP";
     private string servantId = "100100";
     private string downloadRoot = "";
@@ -64,9 +63,8 @@ public sealed class FGOAtlasAssetDownloader : MonoBehaviour
 
     private void OnGUI()
     {
-        float workbenchWidth = Mathf.Clamp(Screen.width * 0.36f, 300f, 430f);
-        float x = workbenchWidth + 24f;
-        float width = Mathf.Max(260f, Mathf.Min(500f, Screen.width - x - 12f));
+        float width = Mathf.Min(500f, Mathf.Max(330f, Screen.width - 470f));
+        float x = Screen.width >= 960f ? 454f : 12f;
         float height = Mathf.Max(300f, Screen.height - 24f);
         Rect area = new Rect(x, 12f, width, height);
 
@@ -74,57 +72,46 @@ public sealed class FGOAtlasAssetDownloader : MonoBehaviour
         {
             wrappedLabelStyle = new GUIStyle(GUI.skin.label);
             wrappedLabelStyle.wordWrap = true;
-            wrappedBoxStyle = new GUIStyle(GUI.skin.box);
-            wrappedBoxStyle.wordWrap = true;
-            wrappedBoxStyle.alignment = TextAnchor.MiddleLeft;
         }
 
-        GUILayout.BeginArea(area, "Atlas 资源下载", GUI.skin.window);
-        panelScroll = GUILayout.BeginScrollView(panelScroll, false, true, GUIStyle.none, GUI.skin.verticalScrollbar, GUILayout.Width(width - 12f), GUILayout.Height(height - 34f));
-        GUILayout.Label("获取角色目录 → 选择灵基 / 灵衣 → 保存原始 Bundle 与纹理。", wrappedLabelStyle, GUILayout.ExpandWidth(true));
+        GUILayout.BeginArea(area, "Atlas 下载到本地", GUI.skin.window);
+        panelScroll = GUILayout.BeginScrollView(panelScroll, false, true, GUILayout.Width(width - 12f), GUILayout.Height(height - 34f));
+        GUILayout.Label("获取 API 元数据 → 选择灵基 / 灵衣 → 下载原始 Bundle 与纹理");
 
-        GUILayout.BeginVertical("box");
-        GUILayout.Label("① 角色资源目录");
         GUILayout.BeginHorizontal();
-        GUILayout.Label("区域", GUILayout.Width(38));
+        GUILayout.Label("Region", GUILayout.Width(58));
         int selectedRegion = region == "NA" ? 1 : 0;
         selectedRegion = GUILayout.Toolbar(selectedRegion, new[] { "JP", "NA" });
         region = selectedRegion == 1 ? "NA" : "JP";
         GUILayout.EndHorizontal();
 
         GUILayout.BeginHorizontal();
-        GUILayout.Label("角色 ID", GUILayout.Width(54));
+        GUILayout.Label("Servant ID", GUILayout.Width(76));
         servantId = GUILayout.TextField(servantId);
         GUI.enabled = !busy;
-        if (GUILayout.Button("获取资源目录", GUILayout.Width(92)))
+        if (GUILayout.Button("获取目录", GUILayout.Width(88)))
             StartCoroutine(FetchServantMetadata());
         GUI.enabled = true;
         GUILayout.EndHorizontal();
-        if (!string.IsNullOrEmpty(servantName))
-            GUILayout.Label(servantName + "  ·  " + region + "  ·  " + servantId);
-        GUILayout.EndVertical();
 
-        GUILayout.BeginVertical("box");
-        GUILayout.Label("② 保存位置");
-        GUILayout.Label("原始文件会按区域 / 角色 ID / 灵基或灵衣分类保存。", wrappedLabelStyle, GUILayout.ExpandWidth(true));
+        GUILayout.BeginHorizontal();
+        GUILayout.Label("本地保存目录", GUILayout.Width(76));
         downloadRoot = GUILayout.TextField(downloadRoot);
 #if UNITY_EDITOR
-        GUILayout.BeginHorizontal();
         GUI.enabled = !busy;
-        if (GUILayout.Button("选择保存目录…"))
+        if (GUILayout.Button("浏览…", GUILayout.Width(66)))
         {
             string selected = EditorUtility.OpenFolderPanel("选择 Atlas 资源保存目录", downloadRoot, "");
             if (!string.IsNullOrEmpty(selected)) downloadRoot = selected;
         }
         GUI.enabled = true;
-        GUILayout.EndHorizontal();
 #endif
-        GUILayout.EndVertical();
+        GUILayout.EndHorizontal();
 
         if (busy)
         {
-            GUILayout.BeginVertical("box");
-            GUILayout.Label(busyLabel, wrappedLabelStyle, GUILayout.ExpandWidth(true));
+            GUILayout.Space(4);
+            GUILayout.Label(busyLabel, GUI.skin.box);
             Rect bar = GUILayoutUtility.GetRect(1f, 18f, GUILayout.ExpandWidth(true));
             GUI.Box(bar, GUIContent.none);
             Rect fill = new Rect(bar.x + 2f, bar.y + 2f, Mathf.Max(0f, (bar.width - 4f) * Mathf.Clamp01(progress)), bar.height - 4f);
@@ -132,28 +119,26 @@ public sealed class FGOAtlasAssetDownloader : MonoBehaviour
             GUI.color = new Color(0.22f, 0.68f, 0.38f, 0.95f);
             GUI.DrawTexture(fill, Texture2D.whiteTexture);
             GUI.color = old;
-            GUILayout.Label(Mathf.RoundToInt(progress * 100f) + "%");
-            GUILayout.EndVertical();
         }
 
-        GUILayout.Label("运行状态", GUI.skin.box);
-        GUILayout.Label(status, wrappedBoxStyle, GUILayout.MaxWidth(width - 40f));
+        GUILayout.Label("状态：" + status, GUI.skin.box);
+        if (!string.IsNullOrEmpty(servantName))
+            GUILayout.Label("角色：" + servantName + "  /  " + region + "  /  " + servantId);
 
-        GUILayout.BeginVertical("box");
-        GUILayout.Label("③ 可下载的角色形态");
         if (modelEntries.Count > 0)
         {
-            entriesScroll = GUILayout.BeginScrollView(entriesScroll, false, true, GUIStyle.none, GUI.skin.verticalScrollbar, GUILayout.MinHeight(100f), GUILayout.MaxHeight(250f));
+            GUILayout.Space(6);
+            GUILayout.Label("API 返回的模型资源（按实际数据列出）：");
+            entriesScroll = GUILayout.BeginScrollView(entriesScroll, false, true, GUILayout.MinHeight(110f), GUILayout.MaxHeight(280f));
             foreach (ModelEntry entry in modelEntries)
             {
                 GUILayout.BeginHorizontal("box");
                 GUILayout.BeginVertical();
                 GUILayout.Label(entry.displayName, GUI.skin.label);
-                GUILayout.Label(entry.kind == "ascension" ? "灵基资源" : "灵衣资源", GUI.skin.label);
-                GUILayout.Label(entry.manifestUrl, wrappedLabelStyle, GUILayout.MaxWidth(Mathf.Max(100f, width - 126f)));
+                GUILayout.Label(entry.manifestUrl, wrappedLabelStyle, GUILayout.MaxWidth(width - 112f));
                 GUILayout.EndVertical();
                 GUI.enabled = !busy;
-                if (GUILayout.Button("下载", GUILayout.Width(58f), GUILayout.Height(38f)))
+                if (GUILayout.Button("下载", GUILayout.Width(62f), GUILayout.Height(34f)))
                     StartCoroutine(DownloadModelEntry(entry));
                 GUI.enabled = true;
                 GUILayout.EndHorizontal();
@@ -162,37 +147,35 @@ public sealed class FGOAtlasAssetDownloader : MonoBehaviour
         }
         else
         {
-            GUILayout.Label("先输入角色 ID 并获取资源目录。若角色没有 spriteModel 数据，这里不会列出可下载项目。", wrappedBoxStyle, GUILayout.MaxWidth(width - 40f));
+            GUILayout.Label("尚未获取资源目录。部分角色可能没有 spriteModel 数据。", GUI.skin.box);
         }
-        GUILayout.EndVertical();
 
-        GUILayout.BeginVertical("box");
-        GUILayout.Label("④ 已下载的原始 Bundle");
+        GUILayout.Space(6);
+        GUILayout.Label("已下载的原始角色 Bundle：");
         if (downloadedBundles.Count == 0)
-            GUILayout.Label("这里会显示已下载并通过 Unity Bundle 文件头检查的角色资源。", wrappedBoxStyle, GUILayout.MaxWidth(width - 40f));
+            GUILayout.Label("尚无已下载 Bundle。", GUI.skin.box);
         else
         {
-            downloadedScroll = GUILayout.BeginScrollView(downloadedScroll, false, true, GUIStyle.none, GUI.skin.verticalScrollbar, GUILayout.MinHeight(60f), GUILayout.MaxHeight(180f));
+            downloadedScroll = GUILayout.BeginScrollView(downloadedScroll, false, true, GUILayout.MinHeight(60f), GUILayout.MaxHeight(170f));
             for (int i = downloadedBundles.Count - 1; i >= 0; i--)
             {
                 string path = downloadedBundles[i];
                 if (!File.Exists(path)) continue;
-                GUILayout.BeginVertical("box");
-                GUILayout.Label(Path.GetFileName(path), wrappedLabelStyle);
-                GUILayout.Label(path, wrappedLabelStyle);
+                GUILayout.BeginHorizontal("box");
+                GUILayout.Label(Path.GetFileName(path), wrappedLabelStyle, GUILayout.MinWidth(90f), GUILayout.MaxWidth(width - 170f));
                 GUI.enabled = !busy;
-                if (GUILayout.Button("载入到角色工作台", GUILayout.Height(28f)))
+                if (GUILayout.Button("加载到角色工作台", GUILayout.Width(142f)))
                 {
                     if (workbench == null) workbench = GetComponent<FGOCharacterWorkbench>();
                     if (workbench != null) workbench.LoadLocalBundleFile(path);
                     else status = "找不到 FGOCharacterWorkbench 组件。";
                 }
                 GUI.enabled = true;
-                GUILayout.EndVertical();
+                GUILayout.EndHorizontal();
+                GUILayout.Label(path, wrappedLabelStyle, GUILayout.MaxWidth(width - 24f));
             }
             GUILayout.EndScrollView();
         }
-        GUILayout.EndVertical();
 
         GUILayout.EndScrollView();
         GUILayout.EndArea();

@@ -50,8 +50,6 @@ public sealed class FGOCharacterWorkbench : MonoBehaviour
     private Vector2 animationScroll;
     private Vector2 localCatalogScroll;
     private Vector2 workbenchScroll;
-    private GUIStyle wrappedWorkbenchLabelStyle;
-    private GUIStyle wrappedWorkbenchBoxStyle;
     private string localRootFolder = "";
     private bool scanningLocalAssets;
     private bool cancelLocalScanRequested;
@@ -88,22 +86,15 @@ public sealed class FGOCharacterWorkbench : MonoBehaviour
 
     private void OnGUI()
     {
-        if (wrappedWorkbenchLabelStyle == null)
-        {
-            wrappedWorkbenchLabelStyle = new GUIStyle(GUI.skin.label) { wordWrap = true };
-            wrappedWorkbenchBoxStyle = new GUIStyle(GUI.skin.box) { wordWrap = true, alignment = TextAnchor.MiddleLeft };
-        }
-
-        float panelWidth = Mathf.Clamp(Screen.width * 0.36f, 300f, 430f);
+        float panelWidth = Mathf.Min(430f, Screen.width - 24f);
         float panelHeight = Mathf.Max(300f, Screen.height - 24f);
-        GUILayout.BeginArea(new Rect(12f, 12f, panelWidth, panelHeight), "FGO 角色工作台", GUI.skin.window);
-        workbenchScroll = GUILayout.BeginScrollView(workbenchScroll, false, true, GUIStyle.none, GUI.skin.verticalScrollbar, GUILayout.Width(panelWidth - 12f), GUILayout.Height(panelHeight - 30f));
+        GUILayout.BeginArea(new Rect(12f, 12f, panelWidth, panelHeight), "FGO Character Workbench", GUI.skin.window);
+        workbenchScroll = GUILayout.BeginScrollView(workbenchScroll, GUILayout.Width(panelWidth - 12f), GUILayout.Height(panelHeight - 30f));
+        GUILayout.Label("v" + WorkbenchVersion + " · 原始 AssetBundle · 本地 / Atlas · 原生动作播放");
 
-        GUILayout.Label("v" + WorkbenchVersion + " · 加载原始角色资源，并管理灵基、灵衣与原生动作。");
-        GUILayout.Label("资源来源", GUI.skin.box);
         GUILayout.BeginHorizontal();
         GUI.enabled = !loading && !scanningLocalAssets;
-        if (GUILayout.Toggle(sourceMode == SourceMode.LocalFile, "本地资源", GUI.skin.button))
+        if (GUILayout.Toggle(sourceMode == SourceMode.LocalFile, "本地文件", GUI.skin.button))
             sourceMode = SourceMode.LocalFile;
         if (GUILayout.Toggle(sourceMode == SourceMode.Atlas, "Atlas 在线", GUI.skin.button))
             sourceMode = SourceMode.Atlas;
@@ -112,49 +103,43 @@ public sealed class FGOCharacterWorkbench : MonoBehaviour
 
         if (sourceMode == SourceMode.LocalFile)
         {
-            GUILayout.BeginVertical("box");
-            GUILayout.Label("① 选择本地资源目录");
-            GUILayout.Label("扫描目录会自动识别原始 Unity AssetBundle，无需文件扩展名。");
+            GUILayout.Label("本地资源库（按 Unity Bundle 文件头识别，不依赖扩展名）：");
             GUILayout.BeginHorizontal();
             GUI.enabled = !scanningLocalAssets;
             localRootFolder = GUILayout.TextField(localRootFolder);
 #if UNITY_EDITOR
             GUI.enabled = !loading && !scanningLocalAssets;
-            if (GUILayout.Button("浏览…", GUILayout.Width(68)))
+            if (GUILayout.Button("选择目录…", GUILayout.Width(94)))
             {
                 string folder = EditorUtility.OpenFolderPanel("选择 FGO 本地资源根目录", GetInitialDataFolder(), "");
                 if (!string.IsNullOrEmpty(folder)) localRootFolder = folder;
             }
 #endif
             GUI.enabled = !loading && !scanningLocalAssets && !string.IsNullOrWhiteSpace(localRootFolder);
-            if (GUILayout.Button(scanningLocalAssets ? "扫描中…" : "扫描目录", GUILayout.Width(76)))
+            if (GUILayout.Button(scanningLocalAssets ? "扫描中…" : "扫描", GUILayout.Width(72)))
                 StartCoroutine(ScanLocalAssetFolderRoutine());
             GUI.enabled = true;
             GUILayout.EndHorizontal();
-            GUILayout.Label(localCatalogStatus, wrappedWorkbenchBoxStyle, GUILayout.MaxWidth(panelWidth - 40f));
-
+            GUILayout.Label(localCatalogStatus, GUI.skin.box);
             if (scanningLocalAssets)
             {
                 DrawLocalScanProgress();
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("已检查 " + scanFilesInspected + " 个文件\n识别 " + scanBundlesFound +
-                    " 个 Bundle · 遍历 " + scanDirectoriesVisited + " 个目录", wrappedWorkbenchLabelStyle, GUILayout.ExpandWidth(true));
+                GUILayout.Label("已检查 " + scanFilesInspected + " 个文件  |  已识别 " + scanBundlesFound +
+                    " 个 Bundle  |  已遍历 " + scanDirectoriesVisited + " 个目录", GUI.skin.label);
                 GUI.enabled = true;
-                if (GUILayout.Button("取消扫描", GUILayout.Width(76)))
+                if (GUILayout.Button("取消", GUILayout.Width(54)))
                     cancelLocalScanRequested = true;
                 GUILayout.EndHorizontal();
             }
-            GUILayout.EndVertical();
 
             if (localBundles.Count > 0)
             {
-                GUILayout.BeginVertical("box");
-                GUILayout.Label("② 从资源库选择角色 Bundle");
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("搜索", GUILayout.Width(38));
+                GUILayout.Label("筛选", GUILayout.Width(38));
                 localCatalogSearch = GUILayout.TextField(localCatalogSearch);
                 GUILayout.EndHorizontal();
-                localCatalogScroll = GUILayout.BeginScrollView(localCatalogScroll, false, true, GUIStyle.none, GUI.skin.verticalScrollbar, GUILayout.MinHeight(76), GUILayout.MaxHeight(170));
+                localCatalogScroll = GUILayout.BeginScrollView(localCatalogScroll, GUILayout.MinHeight(76), GUILayout.MaxHeight(150));
                 int shown = 0;
                 foreach (LocalAssetEntry entry in localBundles)
                 {
@@ -167,71 +152,65 @@ public sealed class FGOCharacterWorkbench : MonoBehaviour
                     GUILayout.BeginHorizontal("box");
                     GUILayout.BeginVertical();
                     GUILayout.Label(entry.fileName, GUI.skin.label);
-                    GUILayout.Label(entry.relativePath + "  ·  " + FormatFileSize(entry.fileSize), wrappedWorkbenchLabelStyle, GUILayout.ExpandWidth(true));
+                    GUILayout.Label(entry.relativePath + "  ·  " + FormatFileSize(entry.fileSize), GUI.skin.label);
                     GUILayout.EndVertical();
                     GUI.enabled = !loading && !scanningLocalAssets;
-                    if (GUILayout.Button(resourceReference == entry.fullPath ? "已选中" : "选择", GUILayout.Width(62)))
+                    if (GUILayout.Button("选用", GUILayout.Width(54)))
                         resourceReference = entry.fullPath;
                     GUI.enabled = true;
                     GUILayout.EndHorizontal();
                     shown++;
                 }
                 GUILayout.EndScrollView();
-                GUILayout.EndVertical();
             }
 
-            GUILayout.BeginVertical("box");
-            GUILayout.Label("③ 当前载入目标");
+            GUILayout.Label("当前 Bundle 文件路径：");
+            GUILayout.BeginHorizontal();
             resourceReference = GUILayout.TextField(resourceReference);
 #if UNITY_EDITOR
-            GUILayout.BeginHorizontal();
             GUI.enabled = !loading && !scanningLocalAssets;
-            if (GUILayout.Button("浏览 Bundle 文件…"))
+            if (GUILayout.Button("浏览文件…", GUILayout.Width(94)))
             {
                 string path = EditorUtility.OpenFilePanel("选择 FGO 原始 AssetBundle", GetInitialDataFolder(), "");
                 if (!string.IsNullOrEmpty(path)) resourceReference = path;
             }
             GUI.enabled = true;
-            GUILayout.EndHorizontal();
 #endif
-            GUILayout.EndVertical();
+            GUILayout.EndHorizontal();
         }
         else
         {
-            GUILayout.BeginVertical("box");
-            GUILayout.Label("Atlas 资源来源");
-            GUILayout.Label("输入角色 ID，或直接粘贴完整 AssetBundle URL。");
+            GUILayout.Label("输入 battleCharaId（如 100100 / 100130），或完整 AssetBundle URL：");
             resourceReference = GUILayout.TextField(resourceReference);
             GUILayout.BeginHorizontal();
-            GUILayout.Label("服务器区域", GUILayout.Width(72));
+            GUILayout.Label("Region", GUILayout.Width(52));
             int regionIndex = atlasRegion == "NA" ? 1 : 0;
             regionIndex = GUILayout.Toolbar(regionIndex, new[] { "JP", "NA" });
             atlasRegion = regionIndex == 1 ? "NA" : "JP";
             GUILayout.EndHorizontal();
-            GUILayout.Label("资源根地址");
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("资源根地址", GUILayout.Width(76));
             assetBaseUrl = GUILayout.TextField(assetBaseUrl);
-            GUILayout.EndVertical();
+            GUILayout.EndHorizontal();
         }
 
+        GUILayout.BeginHorizontal();
         GUI.enabled = !loading && !scanningLocalAssets && !string.IsNullOrWhiteSpace(resourceReference);
-        if (GUILayout.Button(currentServant == null ? "载入角色" : "载入 / 替换当前角色", GUILayout.Height(34)))
+        if (GUILayout.Button(currentServant == null ? "加载角色" : "加载 / 替换角色或灵衣", GUILayout.Height(30)))
             StartCoroutine(LoadCharacterFromSelectedSource());
         GUI.enabled = true;
-        if (loading) GUILayout.Label("正在载入资源，请稍候…", GUI.skin.box);
+        if (loading) GUILayout.Label("正在加载…");
+        GUILayout.EndHorizontal();
 
-        GUILayout.Space(4);
-        GUILayout.Label("运行状态", GUI.skin.box);
-        GUILayout.Label(status, wrappedWorkbenchBoxStyle, GUILayout.MaxWidth(panelWidth - 40f));
+        GUILayout.Space(6);
+        GUILayout.Label("状态：" + status, GUI.skin.box);
 
         if (currentServant != null)
         {
-            GUILayout.Space(6);
-            GUILayout.BeginVertical("box");
-            GUILayout.Label("当前角色");
-            GUILayout.Label(loadedBundleName, wrappedWorkbenchLabelStyle, GUILayout.ExpandWidth(true));
+            GUILayout.Space(8);
+            GUILayout.Label("当前角色：" + loadedBundleName);
             DrawAscensionControls();
             DrawAnimationControls();
-            GUILayout.EndVertical();
         }
         GUILayout.EndScrollView();
         GUILayout.EndArea();
