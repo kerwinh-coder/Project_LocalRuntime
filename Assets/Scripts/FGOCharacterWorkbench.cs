@@ -50,6 +50,8 @@ public sealed class FGOCharacterWorkbench : MonoBehaviour
     private Vector2 animationScroll;
     private Vector2 localCatalogScroll;
     private Vector2 workbenchScroll;
+    private GUIStyle wrappedWorkbenchLabelStyle;
+    private GUIStyle wrappedWorkbenchBoxStyle;
     private string localRootFolder = "";
     private bool scanningLocalAssets;
     private bool cancelLocalScanRequested;
@@ -86,10 +88,16 @@ public sealed class FGOCharacterWorkbench : MonoBehaviour
 
     private void OnGUI()
     {
+        if (wrappedWorkbenchLabelStyle == null)
+        {
+            wrappedWorkbenchLabelStyle = new GUIStyle(GUI.skin.label) { wordWrap = true };
+            wrappedWorkbenchBoxStyle = new GUIStyle(GUI.skin.box) { wordWrap = true, alignment = TextAnchor.MiddleLeft };
+        }
+
         float panelWidth = Mathf.Clamp(Screen.width * 0.36f, 300f, 430f);
         float panelHeight = Mathf.Max(300f, Screen.height - 24f);
         GUILayout.BeginArea(new Rect(12f, 12f, panelWidth, panelHeight), "FGO 角色工作台", GUI.skin.window);
-        workbenchScroll = GUILayout.BeginScrollView(workbenchScroll, GUILayout.Width(panelWidth - 12f), GUILayout.Height(panelHeight - 30f));
+        workbenchScroll = GUILayout.BeginScrollView(workbenchScroll, false, true, GUIStyle.none, GUI.skin.verticalScrollbar, GUILayout.Width(panelWidth - 12f), GUILayout.Height(panelHeight - 30f));
 
         GUILayout.Label("v" + WorkbenchVersion + " · 加载原始角色资源，并管理灵基、灵衣与原生动作。");
         GUILayout.Label("资源来源", GUI.skin.box);
@@ -123,14 +131,14 @@ public sealed class FGOCharacterWorkbench : MonoBehaviour
                 StartCoroutine(ScanLocalAssetFolderRoutine());
             GUI.enabled = true;
             GUILayout.EndHorizontal();
-            GUILayout.Label(localCatalogStatus, GUI.skin.box);
+            GUILayout.Label(localCatalogStatus, wrappedWorkbenchBoxStyle, GUILayout.MaxWidth(panelWidth - 40f));
 
             if (scanningLocalAssets)
             {
                 DrawLocalScanProgress();
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("已检查 " + scanFilesInspected + " 个文件\n识别 " + scanBundlesFound +
-                    " 个 Bundle · 遍历 " + scanDirectoriesVisited + " 个目录", GUI.skin.label);
+                    " 个 Bundle · 遍历 " + scanDirectoriesVisited + " 个目录", wrappedWorkbenchLabelStyle, GUILayout.ExpandWidth(true));
                 GUI.enabled = true;
                 if (GUILayout.Button("取消扫描", GUILayout.Width(76)))
                     cancelLocalScanRequested = true;
@@ -146,7 +154,7 @@ public sealed class FGOCharacterWorkbench : MonoBehaviour
                 GUILayout.Label("搜索", GUILayout.Width(38));
                 localCatalogSearch = GUILayout.TextField(localCatalogSearch);
                 GUILayout.EndHorizontal();
-                localCatalogScroll = GUILayout.BeginScrollView(localCatalogScroll, GUILayout.MinHeight(76), GUILayout.MaxHeight(170));
+                localCatalogScroll = GUILayout.BeginScrollView(localCatalogScroll, false, true, GUIStyle.none, GUI.skin.verticalScrollbar, GUILayout.MinHeight(76), GUILayout.MaxHeight(170));
                 int shown = 0;
                 foreach (LocalAssetEntry entry in localBundles)
                 {
@@ -159,7 +167,7 @@ public sealed class FGOCharacterWorkbench : MonoBehaviour
                     GUILayout.BeginHorizontal("box");
                     GUILayout.BeginVertical();
                     GUILayout.Label(entry.fileName, GUI.skin.label);
-                    GUILayout.Label(entry.relativePath + "  ·  " + FormatFileSize(entry.fileSize), GUI.skin.label);
+                    GUILayout.Label(entry.relativePath + "  ·  " + FormatFileSize(entry.fileSize), wrappedWorkbenchLabelStyle, GUILayout.ExpandWidth(true));
                     GUILayout.EndVertical();
                     GUI.enabled = !loading && !scanningLocalAssets;
                     if (GUILayout.Button(resourceReference == entry.fullPath ? "已选中" : "选择", GUILayout.Width(62)))
@@ -213,14 +221,14 @@ public sealed class FGOCharacterWorkbench : MonoBehaviour
 
         GUILayout.Space(4);
         GUILayout.Label("运行状态", GUI.skin.box);
-        GUILayout.Label(status, GUI.skin.box);
+        GUILayout.Label(status, wrappedWorkbenchBoxStyle, GUILayout.MaxWidth(panelWidth - 40f));
 
         if (currentServant != null)
         {
             GUILayout.Space(6);
             GUILayout.BeginVertical("box");
             GUILayout.Label("当前角色");
-            GUILayout.Label(loadedBundleName);
+            GUILayout.Label(loadedBundleName, wrappedWorkbenchLabelStyle, GUILayout.ExpandWidth(true));
             DrawAscensionControls();
             DrawAnimationControls();
             GUILayout.EndVertical();
