@@ -138,6 +138,14 @@ public class FateViewerMain : MonoBehaviour
     public void ChangeAnimationTimeScale(float time)
     {
         TimeScale = time / 100;
+
+        // Keep the original viewer's speed control working while containers manage
+        // their own playback speed in the standalone runtime.
+        foreach (var servant in GameObject.FindObjectsOfType<FateServantContainer>())
+            servant.PlaybackSpeed = TimeScale;
+
+        foreach (var np in GameObject.FindObjectsOfType<FateNPContainer>())
+            np.PlaybackSpeed = TimeScale;
     }
 
     public void ChangeAnimationFrame(int value)

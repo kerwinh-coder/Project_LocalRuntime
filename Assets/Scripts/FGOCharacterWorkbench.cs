@@ -62,7 +62,7 @@ public sealed class FGOCharacterWorkbench : MonoBehaviour
     private string localCatalogStatus = "尚未扫描本地资源目录。";
     private readonly List<LocalAssetEntry> localBundles = new List<LocalAssetEntry>();
     private const string LocalIndexFileName = "FGO_LocalAssetIndex.json";
-    private const string WorkbenchVersion = "0.3.2.2";
+    private const string WorkbenchVersion = "0.3.2.3-preview1";
     private string loadedBundleName = "";
     private FateServantContainer currentServant;
     private float playbackSpeed = 1f;
@@ -72,7 +72,6 @@ public sealed class FGOCharacterWorkbench : MonoBehaviour
     private void Awake()
     {
         Application.targetFrameRate = 30;
-        EnsureRuntimeGlobals();
 #if UNITY_EDITOR
         localRootFolder = GetInitialDataFolder();
 #endif
@@ -83,21 +82,6 @@ public sealed class FGOCharacterWorkbench : MonoBehaviour
         // GetComponent<FGOCharacterWorkbench>() to hand downloaded Bundles back.
         if (GetComponent<FGOAtlasAssetDownloader>() == null)
             gameObject.AddComponent<FGOAtlasAssetDownloader>();
-    }
-
-    private void EnsureRuntimeGlobals()
-    {
-        // FateServantContainer.Animate() uses FateViewerMain.Instance.TimeScale.
-        // Keep that tiny native timing bridge, but disable FateViewerMain.Start() so it
-        // does not launch the original browser/API catalogue UI.
-        if (FateViewerMain.Instance == null)
-        {
-            GameObject bridge = new GameObject("FGO_RuntimeGlobals");
-            FateViewerMain main = bridge.AddComponent<FateViewerMain>();
-            main.enabled = false;
-        }
-        if (FateViewerMain.Instance != null)
-            FateViewerMain.Instance.TimeScale = playbackSpeed;
     }
 
     private void OnGUI()
@@ -274,8 +258,7 @@ public sealed class FGOCharacterWorkbench : MonoBehaviour
         playbackSpeed = GUILayout.HorizontalSlider(playbackSpeed, 0f, 3f);
         GUILayout.Label(playbackSpeed.ToString("0.00") + "x", GUILayout.Width(48));
         GUILayout.EndHorizontal();
-        if (FateViewerMain.Instance != null)
-            FateViewerMain.Instance.TimeScale = playbackSpeed;
+        currentServant.PlaybackSpeed = playbackSpeed;
 
         animationScroll = GUILayout.BeginScrollView(animationScroll, GUILayout.MinHeight(120), GUILayout.MaxHeight(260));
         foreach (SimpleAnimation.State state in currentServant.AnimationClips)
@@ -287,8 +270,7 @@ public sealed class FGOCharacterWorkbench : MonoBehaviour
                 {
                     currentServant.PlayAnimation(state.name);
                     status = "正在播放原始动作：" + state.name;
-                    if (FateViewerMain.Instance != null)
-                        FateViewerMain.Instance.TimeScale = playbackSpeed;
+                    currentServant.PlaybackSpeed = playbackSpeed;
                 }
                 catch (Exception ex)
                 {
@@ -422,20 +404,11 @@ public sealed class FGOCharacterWorkbench : MonoBehaviour
 
         FateServantContainer previous = currentServant;
         currentServant = newServant;
+        newServant.PlaybackSpeed = playbackSpeed;
         loadedBundleName = newBundleName;
         CaptureRendererDefaults();
         selectedAscension = 0;
         ApplyAscension(1);
-
-        if (FateViewerMain.Instance != null)
-        {
-            if (previous != null)
-                FateViewerMain.Instance.SpawnedServants.Remove(previous);
-            if (!FateViewerMain.Instance.SpawnedServants.Contains(newServant))
-                FateViewerMain.Instance.SpawnedServants.Add(newServant);
-            FateViewerMain.SelectedServant = newServant;
-            FateViewerMain.Instance.TimeScale = playbackSpeed;
-        }
 
         if (previous != null)
         {
