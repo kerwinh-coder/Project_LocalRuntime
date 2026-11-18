@@ -101,6 +101,7 @@ public static class FGOCharacterAssetExporter
             int meshCount = ExportMeshes(source, assetFolder, assetMap);
             int textureCount = ExportTextures(servant, source, assetFolder, assetMap);
             int materialCount = ExportMaterials(servant, source, assetFolder, assetMap);
+            List<string> shaderDependencies = ExportShaderDependencies(assetFolder, assetMap);
             List<FGOCharacterAnimationPlayer.ClipEntry> exportedStates =
                 ExportAnimationClips(servant.AnimationClips, assetFolder, assetMap);
 
@@ -163,6 +164,7 @@ public static class FGOCharacterAssetExporter
                 "Meshes: " + meshCount + "\n" +
                 "Textures: " + textureCount + "\n" +
                 "Materials: " + materialCount + "\n" +
+                "Shader Dependencies:\n" + string.Join("\n", shaderDependencies.Select(item => "  " + item)) + "\n" +
                 "Animation States: " + exportedStates.Count + "\n" +
                 "Unique Animation Clips: " + exportedStates.Select(entry => entry.clip).Distinct().Count() + "\n" +
                 "Animation Driver: FGOCharacterAnimationPlayer\n" +
@@ -171,9 +173,9 @@ public static class FGOCharacterAssetExporter
                 "Initial Animation: " + initialAnimation + "\n" +
                 "Avatar: " + (sourceAnimator.avatar != null ? "Copied" : "Source Animator has no Avatar") + "\n\n" +
                 "Animation States:\n" + stateReport + "\n\n" +
-                "Dependency note: Meshes, textures, materials, clips and a minimal Animator Controller " +
-                "are exported. Custom Shader assets and any external component dependencies must still " +
-                "be checked in a clean Unity project. This report does not claim complete dependency closure.\n");
+                "Dependency note: Meshes, textures, materials, supported FateViewer shaders, clips and a minimal Animator Controller " +
+                "are exported. Unity built-in shaders remain engine dependencies. Any external component dependencies " +
+                "must still be checked in a clean Unity project; this report does not claim complete dependency closure.\n");
 
             AssetDatabase.ImportAsset(reportPath);
             AssetDatabase.SaveAssets();
@@ -280,6 +282,96 @@ public static class FGOCharacterAssetExporter
             path = transform.name + "/" + path;
         }
         return path;
+    }
+
+    private static List<string> ExportShaderDependencies(
+        string assetFolder,
+        Dictionary<UnityEngine.Object, UnityEngine.Object> assetMap)
+    {
+        List<string> dependencies = new List<string>();
+        HashSet<Shader> processedShaders = new HashSet<Shader>();
+        string shaderFolder = assetFolder + "/Shaders";
+        bool shaderFolderCreated = false;
+
+        foreach (KeyValuePair<UnityEngine.Object, UnityEngine.Object> pair in assetMap)
+        {
+            Material sourceMaterial = pair.Key as Material;
+            Material exportedMaterial = pair.Value as Material;
+            if (sourceMaterial == null || exportedMaterial == null || sourceMaterial.shader == null)
+                continue;
+
+            Shader sourceShader = sourceMaterial.shader;
+            if (!processedShaders.Add(sourceShader))
+                continue;
+
+            string shaderName = sourceShader.name;
+            if (shaderName != "FateShader3Compatible" &&
+                shaderName != "FateScreenshotShaderCompatible")
+            {
+                string externalPath = AssetDatabase.GetAssetPath(sourceShader);
+                if (!string.IsNullOrEmpty(externalPath))
+                {
+                    throw new InvalidOperationException(
+                        "发现尚未纳入独立导出的项目 Shader：" + shaderName +
+                        "（" + externalPath + "）。为避免生成不完整资产，本次导出已停止。");
+                }
+
+                dependencies.Add(shaderName + " (Unity built-in)");
+                continue;
+            }
+
+            string sourcePath = AssetDatabase.GetAssetPath(sourceShader);
+            if (string.IsNullOrEmpty(sourcePath) || !File.Exists(Path.GetFullPath(sourcePath)))
+            {
+                throw new InvalidOperationException(
+                    "无法定位 FateViewer Shader 源文件：" + shaderName);
+            }
+
+            if (!shaderFolderCreated)
+            {
+                string guid = AssetDatabase.CreateFolder(assetFolder, "Shaders");
+                if (string.IsNullOrEmpty(guid))
+                    throw new InvalidOperationException("无法创建 Shader 导出目录：" + shaderFolder);
+                shaderFolderCreated = true;
+            }
+
+            string exportedShaderName = "FGO/Standalone/" + shaderName;
+            string destinationPath = shaderFolder + "/" + shaderName + ".shader";
+            string sourceText = File.ReadAllText(Path.GetFullPath(sourcePath));
+            string sourceDeclaration = "Shader \"" + shaderName + "\"";
+            string exportedDeclaration = "Shader \"" + exportedShaderName + "\"";
+            if (!sourceText.Contains(sourceDeclaration))
+            {
+                throw new InvalidOperationException(
+                    "Shader 源文件中未找到预期声明：" + sourceDeclaration);
+            }
+
+            string exportedText = sourceText.Replace(sourceDeclaration, exportedDeclaration);
+            File.WriteAllText(Path.GetFullPath(destinationPath), exportedText);
+            AssetDatabase.ImportAsset(
+                destinationPath,
+                ImportAssetOptions.ForceSynchronousImport);
+
+            Shader exportedShader = AssetDatabase.LoadAssetAtPath<Shader>(destinationPath);
+            if (exportedShader == null)
+            {
+                throw new InvalidOperationException(
+                    "导出的 Shader 无法被 Unity 导入：" + destinationPath);
+            }
+
+            foreach (KeyValuePair<UnityEngine.Object, UnityEngine.Object> materialPair in assetMap)
+            {
+                Material source = materialPair.Key as Material;
+                Material target = materialPair.Value as Material;
+                if (source != null && target != null && source.shader == sourceShader)
+                    target.shader = exportedShader;
+            }
+
+            dependencies.Add(
+                exportedShaderName + " <- " + sourcePath);
+        }
+
+        return dependencies;
     }
 
     private static int ExportMeshes(
