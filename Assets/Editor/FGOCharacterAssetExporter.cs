@@ -253,9 +253,9 @@ public static class FGOCharacterAssetExporter
         }
     }
 
-    // Remove unsupported and broken script entries from the exported clone only.
-    // Unity can retain a serialized m_Component entry even when GetComponents<Component>()
-    // cannot expose the non-MonoBehaviour script as a normal Component.
+    // Remove ordinary missing MonoBehaviours from the exported clone.
+    // Do not edit GameObject.m_Component through SerializedProperty: Unity exposes
+    // this native-owned array as read-only in supported editor versions.
     private static void StripUnsupportedBattleComponents(GameObject root)
     {
         foreach (Transform child in root.GetComponentsInChildren<Transform>(true))
@@ -269,58 +269,16 @@ public static class FGOCharacterAssetExporter
             }
 
             GameObjectUtility.RemoveMonoBehavioursWithMissingScript(go);
-            RemoveInvalidSerializedComponentEntries(go);
         }
 
         foreach (Transform child in root.GetComponentsInChildren<Transform>(true))
         {
-            SerializedObject serializedObject = new SerializedObject(child.gameObject);
-            SerializedProperty componentList = serializedObject.FindProperty("m_Component");
-            if (componentList == null) continue;
-
-            for (int i = 0; i < componentList.arraySize; i++)
-            {
-                SerializedProperty componentProperty =
-                    componentList.GetArrayElementAtIndex(i).FindPropertyRelative("component");
-                UnityEngine.Object reference = componentProperty != null
-                    ? componentProperty.objectReferenceValue
-                    : null;
-
-                if (reference == null || !(reference is Component))
-                    throw new InvalidOperationException(
-                        "导出副本仍包含无效组件序列化记录，无法保存 Prefab。对象：" +
-                        child.name + "；组件索引：" + i +
-                        "；引用类型：" + (reference != null ? reference.GetType().FullName : "null"));
-            }
-        }
-    }
-
-    private static void RemoveInvalidSerializedComponentEntries(GameObject go)
-    {
-        SerializedObject serializedObject = new SerializedObject(go);
-        SerializedProperty componentList = serializedObject.FindProperty("m_Component");
-        if (componentList == null) return;
-
-        bool changed = false;
-        for (int i = componentList.arraySize - 1; i >= 0; i--)
-        {
-            SerializedProperty componentProperty =
-                componentList.GetArrayElementAtIndex(i).FindPropertyRelative("component");
-            UnityEngine.Object reference = componentProperty != null
-                ? componentProperty.objectReferenceValue
-                : null;
-
-            // Keep every valid Unity Component. Remove only null/broken or non-Component entries.
-            if (reference != null && reference is Component) continue;
-
-            componentList.DeleteArrayElementAtIndex(i);
-            changed = true;
-        }
-
-        if (changed)
-        {
-            serializedObject.ApplyModifiedPropertiesWithoutUndo();
-            EditorUtility.SetDirty(go);
+            int missingCount = GameObjectUtility.GetMonoBehavioursWithMissingScriptCount(child.gameObject);
+            if (missingCount > 0)
+                throw new InvalidOperationException(
+                    "导出副本仍有 " + missingCount +
+                    " 个 Missing MonoBehaviour，Unity 无法安全保存 Prefab。对象：" +
+                    child.name + "。本次已停止导出，未尝试修改 Unity 内部 m_Component 数据。");
         }
     }
 
