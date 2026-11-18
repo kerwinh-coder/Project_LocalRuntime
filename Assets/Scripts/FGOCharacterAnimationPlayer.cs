@@ -106,7 +106,7 @@ public sealed class FGOCharacterAnimationPlayer : MonoBehaviour
         if (!animationReady || animator == null || currentClip == null || frameCount <= 0)
             return;
 
-        float normalizedTime = Mathf.Clamp01(currentFrame / frameCount);
+        float normalizedTime = Mathf.Clamp01(Mathf.Round(currentFrame) / frameCount);
         animator.Play(animatorStateName, 0, normalizedTime);
 
         currentFrame += playbackSpeed;
