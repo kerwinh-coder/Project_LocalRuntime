@@ -59,6 +59,27 @@ public static class FGOCharacterAssetExporter
 
             Animator sourceAnimator = source.GetComponentInChildren<Animator>(true);
             Animator targetAnimator = prefabSource.GetComponentInChildren<Animator>(true);
+            int avatarCount = 0;
+            string avatarNote = "Avatar 未找到。";
+            if (sourceAnimator != null && sourceAnimator.avatar != null)
+            {
+                try
+                {
+                    ExportObject(sourceAnimator.avatar, characterFolder, remap);
+                    Avatar exportedAvatar = remap[sourceAnimator.avatar] as Avatar;
+                    if (targetAnimator != null && exportedAvatar != null)
+                        targetAnimator.avatar = exportedAvatar;
+                    avatarCount = exportedAvatar != null ? 1 : 0;
+                    avatarNote = exportedAvatar != null
+                        ? "Avatar 已复制并重新绑定到导出 Prefab。"
+                        : "Avatar 复制后无法读取导出对象。";
+                }
+                catch (Exception avatarException)
+                {
+                    avatarNote = "Avatar 导出失败：" + avatarException.Message;
+                    Debug.LogWarning("[FGO Export] " + avatarNote);
+                }
+            }
             string controllerNote = "Animator Controller 未复制；请在导出报告中检查控制器依赖。";
             RuntimeAnimatorController baseController = servant.OverrideController != null
                 ? servant.OverrideController.runtimeAnimatorController
@@ -118,6 +139,7 @@ public static class FGOCharacterAssetExporter
                 "Prefab: " + prefabPath + "\n" +
                 "Meshes: " + meshCount + "\nTextures: " + textureCount +
                 "\nMaterials: " + materialCount + "\nAnimation Clips: " + clipCount +
+                "\nAvatars: " + avatarCount + "\n" + avatarNote +
                 "\n" + controllerNote + "\n\n" +
                 "Animation States:\n" + stateReport + "\n\n" +
                 "依赖检查提示：材质 Shader、Animator Controller 的间接引用、Avatar、脚本及其他外部资源仍需在独立工程验证。此报告不代表依赖已完全自包含。");
@@ -129,6 +151,7 @@ public static class FGOCharacterAssetExporter
                 "第一轮资产导出完成。\nPrefab：" + prefabPath +
                 "\nMesh：" + meshCount + "；Texture：" + textureCount +
                 "；Material：" + materialCount + "；AnimationClip：" + clipCount +
+                "；Avatar：" + avatarCount +
                 "\n\n请先检查导出目录与 ExportReport.txt，再进行独立工程验证。",
                 "OK");
         }
