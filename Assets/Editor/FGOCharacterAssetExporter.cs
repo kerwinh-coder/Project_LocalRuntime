@@ -489,6 +489,8 @@ public static class FGOCharacterAssetExporter
         }
 
         return result;
+    }
+
     private static string BuildAnimationClipIntegrityReport(
         Dictionary<UnityEngine.Object, UnityEngine.Object> assetMap)
     {
@@ -536,10 +538,7 @@ public static class FGOCharacterAssetExporter
         }
 
         lines.Insert(0, "Animation clips checked: " + clipCount + " | metadata/count mismatches: " + mismatchCount);
-        return lines.Count == 1 ? lines[0] + "\\nNo exported AnimationClip assets found." : string.Join("\\n", lines);
-    }
-
-
+        return lines.Count == 1 ? lines[0] + "\nNo exported AnimationClip assets found." : string.Join("\n", lines);
     }
 
     private static string BuildAnimatorSettingsReport(Animator source, Animator exported)
