@@ -185,12 +185,30 @@ public static class FGOCharacterAssetExporter
         where T : UnityEngine.Object
     {
         if (source == null || remap.ContainsKey(source)) return;
+        if (string.IsNullOrEmpty(folder) || !AssetDatabase.IsValidFolder(folder))
+            throw new InvalidOperationException("导出目标文件夹无效：" + (folder ?? "<null>"));
+
         T copy = UnityEngine.Object.Instantiate(source);
-        copy.name = source.name;
+        copy.name = string.IsNullOrEmpty(source.name) ? source.GetType().Name : source.name;
         string extension = source is AnimationClip ? ".anim" : source is Material ? ".mat" : ".asset";
-        string path = AssetDatabase.GenerateUniqueAssetPath(folder + "/" + MakeSafeName(source.name) + extension);
-        AssetDatabase.CreateAsset(copy, path);
-        remap.Add(source, copy);
+        string basePath = folder.TrimEnd('/') + "/" + MakeSafeName(copy.name) + extension;
+        string path = AssetDatabase.GenerateUniqueAssetPath(basePath);
+        if (string.IsNullOrEmpty(path))
+        {
+            UnityEngine.Object.DestroyImmediate(copy);
+            throw new InvalidOperationException("Unity 无法生成资产路径。目标文件夹：" + folder + "；原始对象：" + source.GetType().Name + " / " + source.name);
+        }
+
+        try
+        {
+            AssetDatabase.CreateAsset(copy, path);
+            remap.Add(source, copy);
+        }
+        catch
+        {
+            UnityEngine.Object.DestroyImmediate(copy);
+            throw;
+        }
     }
 
     private static void RemapHierarchyAssets(GameObject root, Dictionary<UnityEngine.Object, UnityEngine.Object> remap)
