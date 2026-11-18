@@ -253,12 +253,32 @@ public static class FGOCharacterAssetExporter
         }
     }
 
-    // Invalid legacy script entries can appear as missing MonoBehaviours in the cloned hierarchy.
-    // Remove missing script slots from every object before attempting Prefab serialization.
+    // Remove the legacy BattleServantDeadComponent explicitly. It is not a valid
+    // MonoBehaviour and Unity refuses to serialize a hierarchy that still contains it.
+    // Also remove ordinary missing-script slots from the exported clone.
     private static void StripUnsupportedBattleComponents(GameObject root)
     {
         foreach (Transform child in root.GetComponentsInChildren<Transform>(true))
+        {
+            Component[] components = child.GetComponents<Component>();
+            foreach (Component component in components)
+            {
+                if (component != null && component.GetType().Name == "BattleServantDeadComponent")
+                    UnityEngine.Object.DestroyImmediate(component, true);
+            }
+
             GameObjectUtility.RemoveMonoBehavioursWithMissingScript(child.gameObject);
+        }
+
+        foreach (Transform child in root.GetComponentsInChildren<Transform>(true))
+        {
+            foreach (Component component in child.GetComponents<Component>())
+            {
+                if (component != null && component.GetType().Name == "BattleServantDeadComponent")
+                    throw new InvalidOperationException(
+                        "导出副本仍包含不受支持的 BattleServantDeadComponent，无法保存 Prefab。对象：" + child.name);
+            }
+        }
     }
 
     private static void RemapHierarchyAssets(GameObject root, Dictionary<UnityEngine.Object, UnityEngine.Object> remap)
