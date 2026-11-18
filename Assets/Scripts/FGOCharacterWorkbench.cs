@@ -466,6 +466,27 @@ public sealed class FGOCharacterWorkbench : MonoBehaviour
             if (sourceBody == null)
                 throw new InvalidOperationException("Bundle 内没有找到名为 chr 的角色对象。Bundle=" + bundle.name);
 
+            // Use the materials actually referenced by chr renderers as the
+            // authoritative set. This also captures textures referenced by
+            // those materials even if they were not returned as top-level
+            // AssetBundle assets.
+            foreach (Renderer renderer in sourceBody.GetComponentsInChildren<Renderer>(true))
+            {
+                foreach (Material material in renderer.sharedMaterials)
+                {
+                    if (material == null) continue;
+                    if (!servant.Materials.Contains(material))
+                        servant.Materials.Add(material);
+
+                    foreach (string propertyName in material.GetTexturePropertyNames())
+                    {
+                        Texture2D texture = material.GetTexture(propertyName) as Texture2D;
+                        if (texture != null && !servant.Textures.Contains(texture))
+                            servant.Textures.Add(texture);
+                    }
+                }
+            }
+
             ApplyNativeMaterialSetup(servant);
 
             servant.BodyMain = Instantiate(sourceBody, servant.transform);
