@@ -55,6 +55,8 @@ public static class FGOCharacterAssetExporter
             GameObject prefabSource = UnityEngine.Object.Instantiate(source);
             prefabSource.name = source.name;
             RemapHierarchyAssets(prefabSource, remap);
+            foreach (SimpleAnimation simpleAnimation in prefabSource.GetComponentsInChildren<SimpleAnimation>(true))
+                UnityEngine.Object.DestroyImmediate(simpleAnimation);
 
             Animator sourceAnimator = source.GetComponentInChildren<Animator>(true);
             Animator targetAnimator = prefabSource.GetComponentInChildren<Animator>(true);
@@ -74,7 +76,8 @@ public static class FGOCharacterAssetExporter
                         AnimatorOverrideController exportedOverride = new AnimatorOverrideController(copiedController);
                         List<KeyValuePair<AnimationClip, AnimationClip>> sourceOverrides =
                             new List<KeyValuePair<AnimationClip, AnimationClip>>();
-                        servant.OverrideController.GetOverrides(sourceOverrides);
+                        if (servant.OverrideController != null)
+                            servant.OverrideController.GetOverrides(sourceOverrides);
                         List<KeyValuePair<AnimationClip, AnimationClip>> exportedOverrides =
                             new List<KeyValuePair<AnimationClip, AnimationClip>>();
                         foreach (KeyValuePair<AnimationClip, AnimationClip> pair in sourceOverrides)
@@ -96,6 +99,9 @@ public static class FGOCharacterAssetExporter
             PrefabUtility.SaveAsPrefabAsset(prefabSource, prefabPath);
             UnityEngine.Object.DestroyImmediate(prefabSource);
 
+            string stateReport = string.Join("\\n", servant.AnimationClips
+                .Where(state => state != null && state.clip != null)
+                .Select(state => state.name + " -> " + state.clip.name));
             string reportPath = characterFolder + "/ExportReport.txt";
             File.WriteAllText(reportPath,
                 "FGO Character Asset Export\n" +
