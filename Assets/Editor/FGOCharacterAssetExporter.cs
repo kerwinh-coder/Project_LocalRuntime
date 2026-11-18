@@ -164,6 +164,7 @@ public static class FGOCharacterAssetExporter
 
             string animationEventReport = BuildAnimationEventReport(exportedStates, assetMap);
             string animationCurveReport = BuildAnimationCurveBindingReport(exportedStates, savedPrefab.transform);
+            string animationClipIntegrityReport = BuildAnimationClipIntegrityReport(assetMap);
             string animatorSettingsReport = BuildAnimatorSettingsReport(sourceAnimator, savedPrefabAnimator);
 
             int copiedComponentCount = componentAudit.Count(item => item.Contains(" | COPIED"));
@@ -195,6 +196,7 @@ public static class FGOCharacterAssetExporter
                 "Animator Slot: " + AnimationSlotName + "\n" +
                 "Initial Animation: " + initialAnimation + "\n" +
                 "Animator Settings Audit:\n" + animatorSettingsReport + "\n\n" +
+                "Animation Clip Integrity Audit:\n" + animationClipIntegrityReport + "\n\n" +
                 "Avatar: " + (sourceAnimator.avatar != null ? "Copied" : "Source Animator has no Avatar") + "\n\n" +
                 "Animation Curve Binding Audit:\n" + animationCurveReport + "\n\n" +
                 "Animation Event Audit:\n" + animationEventReport + "\n\n" +
@@ -487,6 +489,57 @@ public static class FGOCharacterAssetExporter
         }
 
         return result;
+    private static string BuildAnimationClipIntegrityReport(
+        Dictionary<UnityEngine.Object, UnityEngine.Object> assetMap)
+    {
+        List<string> lines = new List<string>();
+        int clipCount = 0;
+        int mismatchCount = 0;
+
+        foreach (KeyValuePair<UnityEngine.Object, UnityEngine.Object> pair in assetMap)
+        {
+            AnimationClip source = pair.Key as AnimationClip;
+            AnimationClip exported = pair.Value as AnimationClip;
+            if (source == null || exported == null)
+                continue;
+
+            clipCount++;
+            EditorCurveBinding[] sourceFloat = AnimationUtility.GetCurveBindings(source);
+            EditorCurveBinding[] exportedFloat = AnimationUtility.GetCurveBindings(exported);
+            EditorCurveBinding[] sourceObject = AnimationUtility.GetObjectReferenceCurveBindings(source);
+            EditorCurveBinding[] exportedObject = AnimationUtility.GetObjectReferenceCurveBindings(exported);
+            AnimationEvent[] sourceEvents = AnimationUtility.GetAnimationEvents(source);
+            AnimationEvent[] exportedEvents = AnimationUtility.GetAnimationEvents(exported);
+
+            bool matches =
+                sourceFloat.Length == exportedFloat.Length &&
+                sourceObject.Length == exportedObject.Length &&
+                sourceEvents.Length == exportedEvents.Length &&
+                Mathf.Approximately(source.length, exported.length) &&
+                Mathf.Approximately(source.frameRate, exported.frameRate) &&
+                source.wrapMode == exported.wrapMode &&
+                source.legacy == exported.legacy;
+
+            if (!matches)
+                mismatchCount++;
+
+            lines.Add(
+                source.name + " -> " + exported.name +
+                " | float curves " + sourceFloat.Length + "/" + exportedFloat.Length +
+                " | object curves " + sourceObject.Length + "/" + exportedObject.Length +
+                " | events " + sourceEvents.Length + "/" + exportedEvents.Length +
+                " | length " + source.length.ToString("0.000") + "/" + exported.length.ToString("0.000") +
+                " | frameRate " + source.frameRate.ToString("0.##") + "/" + exported.frameRate.ToString("0.##") +
+                " | wrapMode " + source.wrapMode + "/" + exported.wrapMode +
+                " | legacy " + source.legacy + "/" + exported.legacy +
+                " | " + (matches ? "MATCH" : "MISMATCH"));
+        }
+
+        lines.Insert(0, "Animation clips checked: " + clipCount + " | metadata/count mismatches: " + mismatchCount);
+        return lines.Count == 1 ? lines[0] + "\\nNo exported AnimationClip assets found." : string.Join("\\n", lines);
+    }
+
+
     }
 
     private static string BuildAnimatorSettingsReport(Animator source, Animator exported)
