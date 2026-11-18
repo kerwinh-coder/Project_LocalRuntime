@@ -203,6 +203,26 @@ public static class FGOCharacterAssetExporter
         }
     }
 
+    private static void LogSingleMaterialReferenceDiagnostics(Material material, string stage)
+    {
+        if (material == null) return;
+
+        string textureDetails = "";
+        foreach (string propertyName in material.GetTexturePropertyNames())
+        {
+            Texture texture = material.GetTexture(propertyName);
+            textureDetails += " [" + propertyName + "=" +
+                (texture != null
+                    ? texture.name + "#" + texture.GetInstanceID()
+                    : "NULL") + "]";
+        }
+
+        Debug.Log("[FGO MaterialDiag][" + stage + "] Material=" +
+            material.name + " id=" + material.GetInstanceID() +
+            " shader=" + (material.shader != null ? material.shader.name : "NULL") +
+            textureDetails, material);
+    }
+
     // Temporary diagnostics: compare live source references with exported asset references.
     private static void LogMaterialReferenceDiagnostics(
         FateServantContainer servant,
@@ -409,6 +429,9 @@ public static class FGOCharacterAssetExporter
         if (assetMap.TryGetValue(source, out existing))
             return existing as T;
 
+        if (source is Material)
+            LogSingleMaterialReferenceDiagnostics((Material)(UnityEngine.Object)source, "EXPORT_OBJECT_SOURCE");
+
         T copy;
         if (source is Texture2D)
             copy = (T)(UnityEngine.Object)CopyTextureReadable((Texture2D)(UnityEngine.Object)source);
@@ -416,6 +439,9 @@ public static class FGOCharacterAssetExporter
             copy = UnityEngine.Object.Instantiate(source);
 
         copy.name = string.IsNullOrEmpty(source.name) ? source.GetType().Name : source.name;
+
+        if (source is Material)
+            LogSingleMaterialReferenceDiagnostics((Material)(UnityEngine.Object)copy, "EXPORT_OBJECT_INSTANTIATED");
 
         string extension = source is AnimationClip ? ".anim" :
             source is Material ? ".mat" :
@@ -428,6 +454,8 @@ public static class FGOCharacterAssetExporter
         {
             AssetDatabase.CreateAsset(copy, path);
             assetMap.Add(source, copy);
+            if (copy is Material)
+                LogSingleMaterialReferenceDiagnostics((Material)(UnityEngine.Object)copy, "EXPORT_OBJECT_ASSET_CREATED");
             return copy;
         }
         catch
