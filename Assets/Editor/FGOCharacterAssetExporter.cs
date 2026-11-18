@@ -253,31 +253,74 @@ public static class FGOCharacterAssetExporter
         }
     }
 
-    // Remove the legacy BattleServantDeadComponent explicitly. It is not a valid
-    // MonoBehaviour and Unity refuses to serialize a hierarchy that still contains it.
-    // Also remove ordinary missing-script slots from the exported clone.
+    // Remove unsupported and broken script entries from the exported clone only.
+    // Unity can retain a serialized m_Component entry even when GetComponents<Component>()
+    // cannot expose the non-MonoBehaviour script as a normal Component.
     private static void StripUnsupportedBattleComponents(GameObject root)
     {
         foreach (Transform child in root.GetComponentsInChildren<Transform>(true))
         {
-            Component[] components = child.GetComponents<Component>();
-            foreach (Component component in components)
+            GameObject go = child.gameObject;
+
+            foreach (Component component in go.GetComponents<Component>())
             {
                 if (component != null && component.GetType().Name == "BattleServantDeadComponent")
                     UnityEngine.Object.DestroyImmediate(component, true);
             }
 
-            GameObjectUtility.RemoveMonoBehavioursWithMissingScript(child.gameObject);
+            GameObjectUtility.RemoveMonoBehavioursWithMissingScript(go);
+            RemoveInvalidSerializedComponentEntries(go);
         }
 
         foreach (Transform child in root.GetComponentsInChildren<Transform>(true))
         {
-            foreach (Component component in child.GetComponents<Component>())
+            SerializedObject serializedObject = new SerializedObject(child.gameObject);
+            SerializedProperty componentList = serializedObject.FindProperty("m_Component");
+            if (componentList == null) continue;
+
+            for (int i = 0; i < componentList.arraySize; i++)
             {
-                if (component != null && component.GetType().Name == "BattleServantDeadComponent")
+                SerializedProperty componentProperty =
+                    componentList.GetArrayElementAtIndex(i).FindPropertyRelative("component");
+                UnityEngine.Object reference = componentProperty != null
+                    ? componentProperty.objectReferenceValue
+                    : null;
+
+                if (reference == null || !(reference is Component))
                     throw new InvalidOperationException(
-                        "导出副本仍包含不受支持的 BattleServantDeadComponent，无法保存 Prefab。对象：" + child.name);
+                        "导出副本仍包含无效组件序列化记录，无法保存 Prefab。对象：" +
+                        child.name + "；组件索引：" + i +
+                        "；引用类型：" + (reference != null ? reference.GetType().FullName : "null"));
             }
+        }
+    }
+
+    private static void RemoveInvalidSerializedComponentEntries(GameObject go)
+    {
+        SerializedObject serializedObject = new SerializedObject(go);
+        SerializedProperty componentList = serializedObject.FindProperty("m_Component");
+        if (componentList == null) return;
+
+        bool changed = false;
+        for (int i = componentList.arraySize - 1; i >= 0; i--)
+        {
+            SerializedProperty componentProperty =
+                componentList.GetArrayElementAtIndex(i).FindPropertyRelative("component");
+            UnityEngine.Object reference = componentProperty != null
+                ? componentProperty.objectReferenceValue
+                : null;
+
+            // Keep every valid Unity Component. Remove only null/broken or non-Component entries.
+            if (reference != null && reference is Component) continue;
+
+            componentList.DeleteArrayElementAtIndex(i);
+            changed = true;
+        }
+
+        if (changed)
+        {
+            serializedObject.ApplyModifiedPropertiesWithoutUndo();
+            EditorUtility.SetDirty(go);
         }
     }
 
