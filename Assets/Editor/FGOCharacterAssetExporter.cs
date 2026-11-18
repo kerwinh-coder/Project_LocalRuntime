@@ -675,7 +675,14 @@ public static class FGOCharacterAssetExporter
             {
                 Texture texture = material.GetTexture(propertyName);
                 UnityEngine.Object replacement;
-                if (texture != null && assetMap.TryGetValue(texture, out replacement))
+                bool mapped = texture != null && assetMap.TryGetValue(texture, out replacement);
+                Debug.Log(
+                    "[FGO RemapDiag][MaterialTexture] material=" + material.name +
+                    " property=" + propertyName +
+                    " before=" + (texture != null ? texture.name + "#" + texture.GetInstanceID() : "NULL") +
+                    " mapped=" + mapped +
+                    (mapped ? " after=" + replacement.name + "#" + replacement.GetInstanceID() : ""));
+                if (mapped)
                     material.SetTexture(propertyName, replacement as Texture);
             }
         }
@@ -685,8 +692,17 @@ public static class FGOCharacterAssetExporter
             Material[] materials = renderer.sharedMaterials;
             for (int i = 0; i < materials.Length; i++)
             {
+                Material sourceMaterial = materials[i];
                 UnityEngine.Object replacement;
-                if (materials[i] != null && assetMap.TryGetValue(materials[i], out replacement))
+                bool mapped = sourceMaterial != null &&
+                    assetMap.TryGetValue(sourceMaterial, out replacement);
+                Debug.Log(
+                    "[FGO RemapDiag][RendererMaterial] renderer=" + GetHierarchyPath(renderer.transform) +
+                    " slot=" + i +
+                    " before=" + (sourceMaterial != null ? sourceMaterial.name + "#" + sourceMaterial.GetInstanceID() : "NULL") +
+                    " mapped=" + mapped +
+                    (mapped ? " after=" + replacement.name + "#" + replacement.GetInstanceID() : ""));
+                if (mapped)
                     materials[i] = replacement as Material;
             }
             renderer.sharedMaterials = materials;
