@@ -28,20 +28,20 @@ public static class FGOCharacterAssetExporter
             Application.dataPath, "FGO_Character_Export");
         if (string.IsNullOrEmpty(selectedFolder)) return;
 
-        string projectRoot = Directory.GetParent(Application.dataPath).FullName.Replace("\\", "/");
         string folder = selectedFolder.Replace("\\", "/");
         string assetsRoot = Application.dataPath.Replace("\\", "/");
-        if (!folder.StartsWith(assetsRoot + "/", StringComparison.OrdinalIgnoreCase))
+        if (!folder.StartsWith(assetsRoot, StringComparison.OrdinalIgnoreCase))
         {
             EditorUtility.DisplayDialog("FGO Asset Export", "导出目录必须位于当前工程的 Assets 文件夹内。", "OK");
             return;
         }
 
-        string relativeFolder = "Assets" + folder.Substring(assetsRoot.Length);
-        string characterFolder = relativeFolder + "/" + MakeSafeName(servant.name);
-        if (AssetDatabase.IsValidFolder(characterFolder))
-            characterFolder += "_" + DateTime.Now.ToString("yyyyMMdd_HHmmss");
-        CreateFolders(characterFolder);
+        string characterFolder = "Assets" + folder.Substring(assetsRoot.Length);
+        if (!AssetDatabase.IsValidFolder(characterFolder))
+        {
+            EditorUtility.DisplayDialog("FGO Asset Export", "所选目录不是有效的 Unity Assets 文件夹。", "OK");
+            return;
+        }
 
         try
         {
@@ -70,7 +70,9 @@ public static class FGOCharacterAssetExporter
                 string controllerPath = AssetDatabase.GetAssetPath(baseController);
                 if (!string.IsNullOrEmpty(controllerPath) && controllerPath.EndsWith(".controller", StringComparison.OrdinalIgnoreCase))
                 {
-                    string copiedControllerPath = AssetDatabase.GenerateUniqueAssetPath(characterFolder + "/" + Path.GetFileName(controllerPath));
+                    string copiedControllerPath = characterFolder + "/" + Path.GetFileName(controllerPath);
+                    if (AssetDatabase.LoadMainAssetAtPath(copiedControllerPath) != null)
+                        AssetDatabase.DeleteAsset(copiedControllerPath);
                     if (AssetDatabase.CopyAsset(controllerPath, copiedControllerPath))
                     {
                         RuntimeAnimatorController copiedController = AssetDatabase.LoadAssetAtPath<RuntimeAnimatorController>(copiedControllerPath);
@@ -93,7 +95,10 @@ public static class FGOCharacterAssetExporter
                             exportedOverrides[i] = new KeyValuePair<AnimationClip, AnimationClip>(exportedOverrides[i].Key, replacement);
                         }
                         exportedOverride.ApplyOverrides(exportedOverrides);
-                        AssetDatabase.CreateAsset(exportedOverride, characterFolder + "/Character_AnimatorOverride.overrideController");
+                        string overridePath = characterFolder + "/Character_AnimatorOverride.overrideController";
+                        if (AssetDatabase.LoadMainAssetAtPath(overridePath) != null)
+                            AssetDatabase.DeleteAsset(overridePath);
+                        AssetDatabase.CreateAsset(exportedOverride, overridePath);
                         if (targetAnimator != null) targetAnimator.runtimeAnimatorController = exportedOverride;
                         controllerNote = "基础 Animator Controller 与当前 Override Controller 已复制；原始状态映射已尽可能重定向到导出 Clip。";
                     }
@@ -197,7 +202,9 @@ public static class FGOCharacterAssetExporter
         copy.name = string.IsNullOrEmpty(source.name) ? source.GetType().Name : source.name;
         string extension = source is AnimationClip ? ".anim" : source is Material ? ".mat" : ".asset";
         string basePath = folder.TrimEnd('/') + "/" + MakeSafeName(copy.name) + extension;
-        string path = AssetDatabase.GenerateUniqueAssetPath(basePath);
+        string path = basePath;
+        if (AssetDatabase.LoadMainAssetAtPath(path) != null)
+            AssetDatabase.DeleteAsset(path);
         if (string.IsNullOrEmpty(path))
         {
             UnityEngine.Object.DestroyImmediate(copy);
@@ -246,14 +253,12 @@ public static class FGOCharacterAssetExporter
         }
     }
 
-    // This legacy gameplay component is not a MonoBehaviour and cannot be serialized into a Prefab.
+    // Invalid legacy script entries can appear as missing MonoBehaviours in the cloned hierarchy.
+    // Remove missing script slots from every object before attempting Prefab serialization.
     private static void StripUnsupportedBattleComponents(GameObject root)
     {
-        foreach (Component component in root.GetComponentsInChildren<Component>(true))
-        {
-            if (component != null && component.GetType().Name == "BattleServantDeadComponent")
-                UnityEngine.Object.DestroyImmediate(component);
-        }
+        foreach (Transform child in root.GetComponentsInChildren<Transform>(true))
+            GameObjectUtility.RemoveMonoBehavioursWithMissingScript(child.gameObject);
     }
 
     private static void RemapHierarchyAssets(GameObject root, Dictionary<UnityEngine.Object, UnityEngine.Object> remap)
