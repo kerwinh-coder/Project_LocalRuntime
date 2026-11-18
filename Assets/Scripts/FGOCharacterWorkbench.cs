@@ -557,24 +557,33 @@ public sealed class FGOCharacterWorkbench : MonoBehaviour
                 continue;
             }
 
-            // Capture the source texture before changing shaders. After the shader
-            // assignment, material.mainTexture may refer to the replacement shader's
-            // default property rather than the original material texture.
-            Texture oldMain = material.mainTexture;
+            // Capture source texture references before changing shaders. The replacement
+            // shader may expose different defaults, so do not read these values afterward.
+            Texture oldMain = material.HasProperty("_MainTex")
+                ? material.GetTexture("_MainTex")
+                : material.mainTexture;
+            Texture oldAlpha = material.HasProperty("_Alpha")
+                ? material.GetTexture("_Alpha")
+                : null;
 
             if (characterShader != null)
                 material.shader = characterShader;
 
-            if (oldMain != null)
-            {
-                // Preserve the exact source texture reference; do not depend on a
-                // name lookup that can fail or select a duplicate-named texture.
-                if (material.HasProperty("_MainTex"))
-                    material.SetTexture("_MainTex", oldMain);
+            if (material.HasProperty("_MainTex") && oldMain != null)
+                material.SetTexture("_MainTex", oldMain);
 
-                Texture2D alpha = servant.Textures.FirstOrDefault(t => t != null &&
-                    (t.name == oldMain.name + "a" || t.name == oldMain.name + "_alpha"));
-                if (alpha != null && material.HasProperty("_Alpha"))
+            if (material.HasProperty("_Alpha"))
+            {
+                // Keep an explicitly assigned source alpha texture when available.
+                // Otherwise use FateViewer's conventional sibling texture naming.
+                Texture alpha = oldAlpha;
+                if (alpha == null && oldMain != null)
+                {
+                    alpha = servant.Textures.FirstOrDefault(t => t != null &&
+                        (t.name == oldMain.name + "a" || t.name == oldMain.name + "_alpha"));
+                }
+
+                if (alpha != null)
                     material.SetTexture("_Alpha", alpha);
             }
 
