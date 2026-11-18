@@ -109,7 +109,8 @@ public static class FGOCharacterAssetExporter
                 throw new InvalidOperationException("角色没有可导出的 AnimationClip。");
 
             Dictionary<UnityEngine.Object, UnityEngine.Object> hierarchyMap;
-            prefabSource = BuildCleanExportHierarchy(source, out hierarchyMap);
+            List<string> componentAudit;
+            prefabSource = BuildCleanExportHierarchy(source, out hierarchyMap, out componentAudit);
             RemapSerializedAssetReferences(prefabSource, assetMap);
             RemapHierarchyAssets(prefabSource, assetMap);
             LogMaterialReferenceDiagnostics(servant, prefabSource, "EXPORT_AFTER_REMAP");
@@ -169,6 +170,7 @@ public static class FGOCharacterAssetExporter
                 "Animation States: " + exportedStates.Count + "\n" +
                 "Unique Animation Clips: " + exportedStates.Select(entry => entry.clip).Distinct().Count() + "\n" +
                 "Animation Driver: FGOCharacterAnimationPlayer\n" +
+                "Component Copy Audit:\n" + string.Join("\n", componentAudit.Select(item => "  " + item)) + "\n" +
                 "Animator State: " + AnimatorStateName + "\n" +
                 "Animator Slot: " + AnimationSlotName + "\n" +
                 "Initial Animation: " + initialAnimation + "\n" +
@@ -632,15 +634,17 @@ public static class FGOCharacterAssetExporter
 
     private static GameObject BuildCleanExportHierarchy(
         GameObject sourceRoot,
-        out Dictionary<UnityEngine.Object, UnityEngine.Object> objectMap)
+        out Dictionary<UnityEngine.Object, UnityEngine.Object> objectMap,
+        out List<string> componentAudit)
     {
         objectMap = new Dictionary<UnityEngine.Object, UnityEngine.Object>();
+        componentAudit = new List<string>();
         GameObject targetRoot = new GameObject(sourceRoot.name);
         objectMap[sourceRoot] = targetRoot;
         objectMap[sourceRoot.transform] = targetRoot.transform;
         CopyTransformValues(sourceRoot.transform, targetRoot.transform);
 
-        CopyChildrenRecursive(sourceRoot.transform, targetRoot.transform, objectMap);
+        CopyChildrenRecursive(sourceRoot.transform, targetRoot.transform, objectMap, componentAudit);
         RemapSerializedReferences(objectMap);
         return targetRoot;
     }
@@ -648,7 +652,8 @@ public static class FGOCharacterAssetExporter
     private static void CopyChildrenRecursive(
         Transform sourceParent,
         Transform targetParent,
-        Dictionary<UnityEngine.Object, UnityEngine.Object> objectMap)
+        Dictionary<UnityEngine.Object, UnityEngine.Object> objectMap,
+        List<string> componentAudit)
     {
         foreach (Transform sourceChild in sourceParent)
         {
@@ -658,20 +663,35 @@ public static class FGOCharacterAssetExporter
             CopyTransformValues(sourceChild, targetTransform);
             objectMap[sourceChild.gameObject] = targetObject;
             objectMap[sourceChild] = targetTransform;
-            CopyChildrenRecursive(sourceChild, targetTransform, objectMap);
+            CopyChildrenRecursive(sourceChild, targetTransform, objectMap, componentAudit);
         }
 
         GameObject sourceObject = sourceParent.gameObject;
         GameObject targetObjectForComponents = targetParent.gameObject;
         foreach (Component sourceComponent in sourceObject.GetComponents<Component>())
         {
-            if (sourceComponent == null) continue;
+            if (sourceComponent == null)
+            {
+                componentAudit.Add(GetHierarchyPath(sourceParent) + " | MISSING SCRIPT COMPONENT");
+                continue;
+            }
 
             Type componentType = sourceComponent.GetType();
-            if (componentType == typeof(Transform) || componentType == typeof(SimpleAnimation))
+            if (componentType == typeof(Transform))
+            {
+                componentAudit.Add(GetHierarchyPath(sourceParent) + " | Transform | COPIED AS HIERARCHY");
                 continue;
+            }
+            if (componentType == typeof(SimpleAnimation))
+            {
+                componentAudit.Add(GetHierarchyPath(sourceParent) + " | SimpleAnimation | INTENTIONALLY EXCLUDED (clips exported separately)");
+                continue;
+            }
             if (componentType.Name == "BattleServantDeadComponent")
+            {
+                componentAudit.Add(GetHierarchyPath(sourceParent) + " | " + componentType.FullName + " | INTENTIONALLY EXCLUDED");
                 continue;
+            }
 
             try
             {
@@ -681,11 +701,14 @@ public static class FGOCharacterAssetExporter
 
                 EditorUtility.CopySerialized(sourceComponent, targetComponent);
                 objectMap[sourceComponent] = targetComponent;
+                componentAudit.Add(GetHierarchyPath(sourceParent) + " | " + componentType.FullName + " | COPIED");
             }
             catch (Exception exception)
             {
+                componentAudit.Add(GetHierarchyPath(sourceParent) + " | " + componentType.FullName +
+                    " | FAILED: " + exception.Message);
                 Debug.LogWarning(
-                    "[FGO Export] Skipped component " + componentType.FullName +
+                    "[FGO Export] Failed to copy component " + componentType.FullName +
                     " on " + GetHierarchyPath(sourceParent) + ": " + exception.Message);
             }
         }
