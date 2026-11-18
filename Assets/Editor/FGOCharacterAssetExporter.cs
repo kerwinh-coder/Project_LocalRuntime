@@ -480,6 +480,10 @@ public static class FGOCharacterAssetExporter
                 clip = exportedClip
             });
         }
+
+        return result;
+    }
+
     private static string BuildAnimatorSettingsReport(Animator source, Animator exported)
     {
         if (source == null || exported == null)
@@ -504,9 +508,6 @@ public static class FGOCharacterAssetExporter
             ", exported=" + (exportedAvatar != null && exportedAvatar.isHuman);
     }
 
-
-
-        return result;
     private static string BuildAnimationCurveBindingReport(
         IEnumerable<FGOCharacterAnimationPlayer.ClipEntry> states,
         Transform exportedRoot)
