@@ -157,6 +157,16 @@ public static class FGOCharacterAssetExporter
                 " (" + entry.clip.length.ToString("0.000") + "s, " +
                 entry.clip.frameRate.ToString("0.##") + " fps)"));
 
+            int copiedComponentCount = componentAudit.Count(item => item.Contains(" | COPIED"));
+            int excludedComponentCount = componentAudit.Count(item => item.Contains(" | INTENTIONALLY EXCLUDED"));
+            int failedComponentCount = componentAudit.Count(item => item.Contains(" | FAILED:"));
+            int missingScriptCount = componentAudit.Count(item => item.Contains(" | MISSING SCRIPT COMPONENT"));
+            string componentAuditSummary =
+                "  Copied: " + copiedComponentCount + "\n" +
+                "  Intentionally excluded: " + excludedComponentCount + "\n" +
+                "  Copy failures: " + failedComponentCount + "\n" +
+                "  Missing scripts: " + missingScriptCount + "\n";
+
             File.WriteAllText(
                 Path.GetFullPath(reportPath),
                 "FGO Standalone Character Export\n" +
@@ -170,7 +180,8 @@ public static class FGOCharacterAssetExporter
                 "Animation States: " + exportedStates.Count + "\n" +
                 "Unique Animation Clips: " + exportedStates.Select(entry => entry.clip).Distinct().Count() + "\n" +
                 "Animation Driver: FGOCharacterAnimationPlayer\n" +
-                "Component Copy Audit:\n" + string.Join("\n", componentAudit.Select(item => "  " + item)) + "\n" +
+                "Component Copy Audit Summary:\n" + componentAuditSummary +
+                "Component Copy Audit Details:\n" + string.Join("\n", componentAudit.Select(item => "  " + item)) + "\n" +
                 "Animator State: " + AnimatorStateName + "\n" +
                 "Animator Slot: " + AnimationSlotName + "\n" +
                 "Initial Animation: " + initialAnimation + "\n" +
