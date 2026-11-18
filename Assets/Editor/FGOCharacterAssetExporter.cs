@@ -487,6 +487,7 @@ public static class FGOCharacterAssetExporter
             copy.anisoLevel = source.anisoLevel;
             copy.ReadPixels(new Rect(0, 0, source.width, source.height), 0, 0, false);
             copy.Apply(false, false);
+            LogTextureCopyDiagnostics(source, copy);
             return copy;
         }
         catch
@@ -499,6 +500,41 @@ public static class FGOCharacterAssetExporter
             RenderTexture.active = previous;
             RenderTexture.ReleaseTemporary(temporary);
         }
+    }
+
+
+    private static void LogTextureCopyDiagnostics(Texture2D source, Texture2D copy)
+    {
+        if (source == null || copy == null) return;
+
+        Color32[] pixels = copy.GetPixels32();
+        byte minAlpha = 255;
+        byte maxAlpha = 0;
+        int transparentPixels = 0;
+        int opaquePixels = 0;
+        int partialAlphaPixels = 0;
+
+        foreach (Color32 pixel in pixels)
+        {
+            if (pixel.a < minAlpha) minAlpha = pixel.a;
+            if (pixel.a > maxAlpha) maxAlpha = pixel.a;
+            if (pixel.a == 0) transparentPixels++;
+            else if (pixel.a == 255) opaquePixels++;
+            else partialAlphaPixels++;
+        }
+
+        Debug.Log(
+            "[FGO Export][TextureCopy] " + source.name +
+            " source=" + source.width + "x" + source.height +
+            " format=" + source.format +
+            " mipmaps=" + source.mipmapCount +
+            " copy=" + copy.width + "x" + copy.height +
+            " format=" + copy.format +
+            " alphaMin=" + minAlpha +
+            " alphaMax=" + maxAlpha +
+            " transparent=" + transparentPixels +
+            " partial=" + partialAlphaPixels +
+            " opaque=" + opaquePixels);
     }
 
     private static GameObject BuildCleanExportHierarchy(
