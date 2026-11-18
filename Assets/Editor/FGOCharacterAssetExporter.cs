@@ -1009,17 +1009,6 @@ public static class FGOCharacterAssetExporter
         target.localScale = source.localScale;
     }
 
-    private static string GetHierarchyPath(Transform transform)
-    {
-        string path = transform.name;
-        while (transform.parent != null)
-        {
-            transform = transform.parent;
-            path = transform.name + "/" + path;
-        }
-        return path;
-    }
-
     private static void RemapSerializedReferences(
         Dictionary<UnityEngine.Object, UnityEngine.Object> objectMap)
     {
