@@ -59,17 +59,35 @@ public static class FGOCharacterAssetExporter
             Animator sourceAnimator = source.GetComponentInChildren<Animator>(true);
             Animator targetAnimator = prefabSource.GetComponentInChildren<Animator>(true);
             string controllerNote = "Animator Controller 未复制；请在导出报告中检查控制器依赖。";
-            if (sourceAnimator != null && sourceAnimator.runtimeAnimatorController != null)
+            RuntimeAnimatorController baseController = servant.OverrideController != null
+                ? servant.OverrideController.runtimeAnimatorController
+                : (sourceAnimator != null ? sourceAnimator.runtimeAnimatorController : null);
+            if (baseController != null)
             {
-                string controllerPath = AssetDatabase.GetAssetPath(sourceAnimator.runtimeAnimatorController);
+                string controllerPath = AssetDatabase.GetAssetPath(baseController);
                 if (!string.IsNullOrEmpty(controllerPath) && controllerPath.EndsWith(".controller", StringComparison.OrdinalIgnoreCase))
                 {
-                    string copiedControllerPath = characterFolder + "/" + Path.GetFileName(controllerPath);
+                    string copiedControllerPath = AssetDatabase.GenerateUniqueAssetPath(characterFolder + "/" + Path.GetFileName(controllerPath));
                     if (AssetDatabase.CopyAsset(controllerPath, copiedControllerPath))
                     {
                         RuntimeAnimatorController copiedController = AssetDatabase.LoadAssetAtPath<RuntimeAnimatorController>(copiedControllerPath);
-                        if (targetAnimator != null) targetAnimator.runtimeAnimatorController = copiedController;
-                        controllerNote = "Animator Controller 已复制：" + copiedControllerPath;
+                        AnimatorOverrideController exportedOverride = new AnimatorOverrideController(copiedController);
+                        List<KeyValuePair<AnimationClip, AnimationClip>> sourceOverrides =
+                            new List<KeyValuePair<AnimationClip, AnimationClip>>();
+                        servant.OverrideController.GetOverrides(sourceOverrides);
+                        List<KeyValuePair<AnimationClip, AnimationClip>> exportedOverrides =
+                            new List<KeyValuePair<AnimationClip, AnimationClip>>();
+                        foreach (KeyValuePair<AnimationClip, AnimationClip> pair in sourceOverrides)
+                        {
+                            AnimationClip replacement = pair.Value;
+                            if (replacement != null && remap.ContainsKey(replacement))
+                                replacement = (AnimationClip)remap[replacement];
+                            exportedOverrides.Add(new KeyValuePair<AnimationClip, AnimationClip>(pair.Key, replacement));
+                        }
+                        exportedOverride.ApplyOverrides(exportedOverrides);
+                        AssetDatabase.CreateAsset(exportedOverride, characterFolder + "/Character_AnimatorOverride.overrideController");
+                        if (targetAnimator != null) targetAnimator.runtimeAnimatorController = exportedOverride;
+                        controllerNote = "基础 Animator Controller 与当前 Override Controller 已复制；原始状态映射已尽可能重定向到导出 Clip。";
                     }
                 }
             }
@@ -158,7 +176,8 @@ public static class FGOCharacterAssetExporter
         if (source == null || remap.ContainsKey(source)) return;
         T copy = UnityEngine.Object.Instantiate(source);
         copy.name = source.name;
-        string path = AssetDatabase.GenerateUniqueAssetPath(folder + "/" + MakeSafeName(source.name) + ".asset");
+        string extension = source is AnimationClip ? ".anim" : source is Material ? ".mat" : ".asset";
+        string path = AssetDatabase.GenerateUniqueAssetPath(folder + "/" + MakeSafeName(source.name) + extension);
         AssetDatabase.CreateAsset(copy, path);
         remap.Add(source, copy);
     }
@@ -171,6 +190,15 @@ public static class FGOCharacterAssetExporter
         foreach (SkinnedMeshRenderer renderer in root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
             if (renderer.sharedMesh != null && remap.ContainsKey(renderer.sharedMesh))
                 renderer.sharedMesh = (Mesh)remap[renderer.sharedMesh];
+        foreach (Material material in remap.Values.OfType<Material>())
+        {
+            foreach (string property in material.GetTexturePropertyNames())
+            {
+                Texture texture = material.GetTexture(property);
+                if (texture != null && remap.ContainsKey(texture))
+                    material.SetTexture(property, (Texture)remap[texture]);
+            }
+        }
         foreach (Renderer renderer in root.GetComponentsInChildren<Renderer>(true))
         {
             Material[] materials = renderer.sharedMaterials;
