@@ -52,10 +52,41 @@ public static class FGOCharacterAssetExporter
             return;
         }
 
-        string assetFolder = "Assets" + folder.Substring(assetsRoot.Length);
-        if (!AssetDatabase.IsValidFolder(assetFolder))
+        string parentAssetFolder = "Assets" + folder.Substring(assetsRoot.Length);
+        if (string.IsNullOrEmpty(parentAssetFolder))
+            parentAssetFolder = "Assets";
+
+        if (!AssetDatabase.IsValidFolder(parentAssetFolder))
         {
-            EditorUtility.DisplayDialog("FGO Character Export", "所选目录不是有效的 Assets 文件夹。", "OK");
+            EditorUtility.DisplayDialog(
+                "FGO Character Export",
+                "所选父目录尚未被 Unity 识别为有效的 Assets 文件夹。请在 Unity Project 窗口中先创建或刷新该父目录，再重新选择。",
+                "OK");
+            return;
+        }
+
+        // Always place one character export inside its own dedicated folder.
+        // The user selects only an existing parent folder; Unity creates the
+        // character folder so it is immediately registered in AssetDatabase.
+        string characterFolderName = "FGO_Character_" + MakeSafeName(servant.name);
+        string assetFolder = parentAssetFolder.TrimEnd('/') + "/" + characterFolderName;
+        int suffix = 2;
+        while (AssetDatabase.IsValidFolder(assetFolder))
+        {
+            assetFolder = parentAssetFolder.TrimEnd('/') + "/" +
+                characterFolderName + "_" + suffix;
+            suffix++;
+        }
+
+        string createdFolderGuid = AssetDatabase.CreateFolder(
+            parentAssetFolder,
+            Path.GetFileName(assetFolder));
+        if (string.IsNullOrEmpty(createdFolderGuid))
+        {
+            EditorUtility.DisplayDialog(
+                "FGO Character Export",
+                "无法创建角色专属导出文件夹：" + assetFolder,
+                "OK");
             return;
         }
 
