@@ -493,17 +493,17 @@ public static class FGOCharacterAssetExporter
         Avatar exportedAvatar = exported.avatar;
 
         return
-            "Source Animator: " + GetHierarchyPath(source.transform) + "\\n" +
-            "Exported Animator: " + GetHierarchyPath(exported.transform) + "\\n" +
-            "Enabled: source=" + source.enabled + ", exported=" + exported.enabled + "\\n" +
-            "Update Mode: source=" + source.updateMode + ", exported=" + exported.updateMode + "\\n" +
-            "Culling Mode: source=" + source.cullingMode + ", exported=" + exported.cullingMode + "\\n" +
-            "Apply Root Motion: source=" + source.applyRootMotion + ", exported=" + exported.applyRootMotion + "\\n" +
-            "Speed: source=" + source.speed + ", exported=" + exported.speed + "\\n" +
+            "Source Animator: " + GetHierarchyPath(source.transform) + "\n" +
+            "Exported Animator: " + GetHierarchyPath(exported.transform) + "\n" +
+            "Enabled: source=" + source.enabled + ", exported=" + exported.enabled + "\n" +
+            "Update Mode: source=" + source.updateMode + ", exported=" + exported.updateMode + "\n" +
+            "Culling Mode: source=" + source.cullingMode + ", exported=" + exported.cullingMode + "\n" +
+            "Apply Root Motion: source=" + source.applyRootMotion + ", exported=" + exported.applyRootMotion + "\n" +
+            "Speed: source=" + source.speed + ", exported=" + exported.speed + "\n" +
             "Avatar: source=" + (sourceAvatar != null ? sourceAvatar.name : "None") +
-            ", exported=" + (exportedAvatar != null ? exportedAvatar.name : "None") + "\\n" +
+            ", exported=" + (exportedAvatar != null ? exportedAvatar.name : "None") + "\n" +
             "Avatar Valid: source=" + (sourceAvatar != null && sourceAvatar.isValid) +
-            ", exported=" + (exportedAvatar != null && exportedAvatar.isValid) + "\\n" +
+            ", exported=" + (exportedAvatar != null && exportedAvatar.isValid) + "\n" +
             "Avatar Human: source=" + (sourceAvatar != null && sourceAvatar.isHuman) +
             ", exported=" + (exportedAvatar != null && exportedAvatar.isHuman);
     }
@@ -557,7 +557,7 @@ public static class FGOCharacterAssetExporter
             " | total object-reference curves: " + totalObjectBindings +
             " | missing hierarchy paths: " + missingPathCount);
 
-        return lines.Count == 1 ? lines[0] + "\\nNo animation states to audit." : string.Join("\\n", lines);
+        return lines.Count == 1 ? lines[0] + "\nNo animation states to audit." : string.Join("\n", lines);
     }
 
     private static bool HasAnimationBindingPath(Transform root, string path)
