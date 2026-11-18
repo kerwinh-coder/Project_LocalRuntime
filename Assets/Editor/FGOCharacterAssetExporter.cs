@@ -159,6 +159,7 @@ public static class FGOCharacterAssetExporter
 
             string animationEventReport = BuildAnimationEventReport(exportedStates, assetMap);
             string animationCurveReport = BuildAnimationCurveBindingReport(exportedStates, prefabSource.transform);
+            string animatorSettingsReport = BuildAnimatorSettingsReport(sourceAnimator, targetAnimator);
 
             int copiedComponentCount = componentAudit.Count(item => item.Contains(" | COPIED"));
             int excludedComponentCount = componentAudit.Count(item => item.Contains(" | INTENTIONALLY EXCLUDED"));
@@ -188,6 +189,7 @@ public static class FGOCharacterAssetExporter
                 "Animator State: " + AnimatorStateName + "\n" +
                 "Animator Slot: " + AnimationSlotName + "\n" +
                 "Initial Animation: " + initialAnimation + "\n" +
+                "Animator Settings Audit:\n" + animatorSettingsReport + "\n\n" +
                 "Avatar: " + (sourceAnimator.avatar != null ? "Copied" : "Source Animator has no Avatar") + "\n\n" +
                 "Animation Curve Binding Audit:\n" + animationCurveReport + "\n\n" +
                 "Animation Event Audit:\n" + animationEventReport + "\n\n" +
@@ -478,6 +480,31 @@ public static class FGOCharacterAssetExporter
                 clip = exportedClip
             });
         }
+    private static string BuildAnimatorSettingsReport(Animator source, Animator exported)
+    {
+        if (source == null || exported == null)
+            return "Source or exported Animator is missing.";
+
+        Avatar sourceAvatar = source.avatar;
+        Avatar exportedAvatar = exported.avatar;
+
+        return
+            "Source Animator: " + GetHierarchyPath(source.transform) + "\\n" +
+            "Exported Animator: " + GetHierarchyPath(exported.transform) + "\\n" +
+            "Enabled: source=" + source.enabled + ", exported=" + exported.enabled + "\\n" +
+            "Update Mode: source=" + source.updateMode + ", exported=" + exported.updateMode + "\\n" +
+            "Culling Mode: source=" + source.cullingMode + ", exported=" + exported.cullingMode + "\\n" +
+            "Apply Root Motion: source=" + source.applyRootMotion + ", exported=" + exported.applyRootMotion + "\\n" +
+            "Speed: source=" + source.speed + ", exported=" + exported.speed + "\\n" +
+            "Avatar: source=" + (sourceAvatar != null ? sourceAvatar.name : "None") +
+            ", exported=" + (exportedAvatar != null ? exportedAvatar.name : "None") + "\\n" +
+            "Avatar Valid: source=" + (sourceAvatar != null && sourceAvatar.isValid) +
+            ", exported=" + (exportedAvatar != null && exportedAvatar.isValid) + "\\n" +
+            "Avatar Human: source=" + (sourceAvatar != null && sourceAvatar.isHuman) +
+            ", exported=" + (exportedAvatar != null && exportedAvatar.isHuman);
+    }
+
+
 
         return result;
     private static string BuildAnimationCurveBindingReport(
