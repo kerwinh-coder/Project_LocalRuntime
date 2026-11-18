@@ -31,6 +31,7 @@ public sealed class FGOCharacterAnimationPlayer : MonoBehaviour
     private int frameCount;
     private float currentFrame;
     private bool animationReady;
+    private bool initialized;
 
     public string CurrentAnimationName { get; private set; }
     public float PlaybackSpeed
@@ -58,13 +59,34 @@ public sealed class FGOCharacterAnimationPlayer : MonoBehaviour
 
     private void Awake()
     {
+        // AddComponent invokes Awake immediately. The Editor exporter fills the
+        // serialized references just after AddComponent, so defer initialization
+        // when the component is not configured yet.
+        TryInitialize(false);
+    }
+
+    private void Start()
+    {
+        // Covers the export-time AddComponent -> Configure sequence in Play Mode.
+        // For a loaded standalone prefab, Awake will already have initialized it.
+        TryInitialize(true);
+    }
+
+    private void TryInitialize(bool reportMissingReferences)
+    {
+        if (initialized || !Application.isPlaying)
+            return;
+
         if (animator == null)
             animator = GetComponentInChildren<Animator>(true);
 
         if (animator == null || baseController == null || slotClip == null)
         {
-            Debug.LogError("[FGO Animation] Animator, base controller, or animation slot is missing.", this);
-            enabled = false;
+            if (reportMissingReferences)
+            {
+                Debug.LogError("[FGO Animation] Animator, base controller, or animation slot is missing.", this);
+                enabled = false;
+            }
             return;
         }
 
@@ -73,6 +95,7 @@ public sealed class FGOCharacterAnimationPlayer : MonoBehaviour
         animator.runtimeAnimatorController = runtimeController;
         animator.speed = 0f;
         animator.applyRootMotion = false;
+        initialized = true;
 
         if (playOnAwake && !string.IsNullOrEmpty(initialAnimationName))
             PlayAnimation(initialAnimationName);
