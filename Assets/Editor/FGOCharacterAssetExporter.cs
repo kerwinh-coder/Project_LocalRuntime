@@ -877,9 +877,14 @@ public static class FGOCharacterAssetExporter
         Color32[] pixels = copy.GetPixels32();
         byte minAlpha = 255;
         byte maxAlpha = 0;
+        byte minRed = 255;
+        byte maxRed = 0;
         int transparentPixels = 0;
         int opaquePixels = 0;
         int partialAlphaPixels = 0;
+        int zeroRedPixels = 0;
+        int fullRedPixels = 0;
+        int partialRedPixels = 0;
 
         foreach (Color32 pixel in pixels)
         {
@@ -888,6 +893,12 @@ public static class FGOCharacterAssetExporter
             if (pixel.a == 0) transparentPixels++;
             else if (pixel.a == 255) opaquePixels++;
             else partialAlphaPixels++;
+
+            if (pixel.r < minRed) minRed = pixel.r;
+            if (pixel.r > maxRed) maxRed = pixel.r;
+            if (pixel.r == 0) zeroRedPixels++;
+            else if (pixel.r == 255) fullRedPixels++;
+            else partialRedPixels++;
         }
 
         Debug.Log(
@@ -901,7 +912,12 @@ public static class FGOCharacterAssetExporter
             " alphaMax=" + maxAlpha +
             " transparent=" + transparentPixels +
             " partial=" + partialAlphaPixels +
-            " opaque=" + opaquePixels);
+            " opaque=" + opaquePixels +
+            " redMin=" + minRed +
+            " redMax=" + maxRed +
+            " redZero=" + zeroRedPixels +
+            " redPartial=" + partialRedPixels +
+            " redFull=" + fullRedPixels);
     }
 
     private static GameObject BuildCleanExportHierarchy(
