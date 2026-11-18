@@ -156,6 +156,9 @@ public static class FGOCharacterAssetExporter
             if (savedPrefabAnimator == null)
                 throw new InvalidOperationException("保存后的 Prefab 中找不到 Animator。");
 
+            // Inspect material and texture references after Unity has serialized the prefab asset.
+            LogMaterialReferenceDiagnostics(null, savedPrefab, "SAVED_PREFAB");
+
             string reportPath = assetFolder + "/ExportReport.txt";
             string stateReport = string.Join("\n", exportedStates.Select(entry =>
                 entry.stateName + " -> " + entry.clip.name +
