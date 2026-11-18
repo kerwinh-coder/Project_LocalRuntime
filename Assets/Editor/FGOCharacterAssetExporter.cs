@@ -695,9 +695,6 @@ public static class FGOCharacterAssetExporter
         return root.Find(path) != null;
     }
 
-
-    }
-
     private static string BuildAnimationEventReport(
         IEnumerable<FGOCharacterAnimationPlayer.ClipEntry> states,
         Dictionary<UnityEngine.Object, UnityEngine.Object> assetMap)
