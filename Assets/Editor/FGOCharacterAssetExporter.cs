@@ -24,7 +24,7 @@ public static class FGOCharacterAssetExporter
             return;
         }
 
-        string selectedFolder = EditorUtility.SaveFolderPanel("选择导出文件夹（全部导出文件直接保存到此文件夹，不会新建子文件夹）",
+        string selectedFolder = EditorUtility.SaveFolderPanel("选择角色总导出文件夹（内部会自动建立分类子文件夹）",
             Application.dataPath, "");
         if (string.IsNullOrEmpty(selectedFolder)) return;
 
@@ -47,11 +47,20 @@ public static class FGOCharacterAssetExporter
         try
         {
             GameObject source = servant.BodyMain;
+            string modelsFolder = EnsureAssetFolder(characterFolder, "Models");
+            string materialsFolder = EnsureAssetFolder(characterFolder, "Materials");
+            string texturesFolder = EnsureAssetFolder(characterFolder, "Textures");
+            string characterTexturesFolder = EnsureAssetFolder(texturesFolder, "Character");
+            string effectsTexturesFolder = EnsureAssetFolder(texturesFolder, "Effects");
+            string animationsFolder = EnsureAssetFolder(characterFolder, "Animations");
+            string controllersFolder = EnsureAssetFolder(characterFolder, "Controllers");
+            string prefabsFolder = EnsureAssetFolder(characterFolder, "Prefabs");
+
             Dictionary<UnityEngine.Object, UnityEngine.Object> remap = new Dictionary<UnityEngine.Object, UnityEngine.Object>();
-            int meshCount = ExportMeshes(source, characterFolder, remap);
-            int textureCount = ExportTextures(servant.Textures, characterFolder, remap);
-            int materialCount = ExportMaterials(servant.Materials, characterFolder, remap);
-            int clipCount = ExportClips(servant.AnimationClips, characterFolder, remap);
+            int meshCount = ExportMeshes(source, modelsFolder, remap);
+            int textureCount = ExportTextures(servant, characterTexturesFolder, effectsTexturesFolder, remap);
+            int materialCount = ExportMaterials(servant, materialsFolder, remap);
+            int clipCount = ExportClips(servant.AnimationClips, animationsFolder, remap);
 
             Dictionary<UnityEngine.Object, UnityEngine.Object> hierarchyMap;
             GameObject prefabSource = BuildCleanExportHierarchy(source, out hierarchyMap);
@@ -68,7 +77,7 @@ public static class FGOCharacterAssetExporter
                 string controllerPath = AssetDatabase.GetAssetPath(baseController);
                 if (!string.IsNullOrEmpty(controllerPath) && controllerPath.EndsWith(".controller", StringComparison.OrdinalIgnoreCase))
                 {
-                    string copiedControllerPath = characterFolder + "/" + Path.GetFileName(controllerPath);
+                    string copiedControllerPath = controllersFolder + "/" + Path.GetFileName(controllerPath);
                     if (AssetDatabase.LoadMainAssetAtPath(copiedControllerPath) != null)
                         AssetDatabase.DeleteAsset(copiedControllerPath);
                     if (AssetDatabase.CopyAsset(controllerPath, copiedControllerPath))
@@ -93,7 +102,7 @@ public static class FGOCharacterAssetExporter
                             exportedOverrides[i] = new KeyValuePair<AnimationClip, AnimationClip>(exportedOverrides[i].Key, replacement);
                         }
                         exportedOverride.ApplyOverrides(exportedOverrides);
-                        string overridePath = characterFolder + "/Character_AnimatorOverride.overrideController";
+                        string overridePath = controllersFolder + "/Character_AnimatorOverride.overrideController";
                         if (AssetDatabase.LoadMainAssetAtPath(overridePath) != null)
                             AssetDatabase.DeleteAsset(overridePath);
                         AssetDatabase.CreateAsset(exportedOverride, overridePath);
@@ -103,7 +112,7 @@ public static class FGOCharacterAssetExporter
                 }
             }
 
-            string prefabPath = characterFolder + "/" + MakeSafeName(source.name) + ".prefab";
+            string prefabPath = prefabsFolder + "/" + MakeSafeName(source.name) + ".prefab";
             PrefabUtility.SaveAsPrefabAsset(prefabSource, prefabPath);
             UnityEngine.Object.DestroyImmediate(prefabSource);
 
@@ -149,26 +158,41 @@ public static class FGOCharacterAssetExporter
         return count;
     }
 
-    private static int ExportTextures(IEnumerable<Texture2D> textures, string folder, Dictionary<UnityEngine.Object, UnityEngine.Object> remap)
+    private static int ExportTextures(
+        FateServantContainer servant,
+        string characterFolder,
+        string effectsFolder,
+        Dictionary<UnityEngine.Object, UnityEngine.Object> remap)
     {
-        int count = 0;
-        foreach (Texture2D texture in textures)
-            if (texture != null) { ExportObject(texture, folder, remap); count++; }
-        foreach (Renderer renderer in Selection.activeGameObject.GetComponent<FateServantContainer>().BodyMain.GetComponentsInChildren<Renderer>(true))
+        HashSet<Texture2D> all = new HashSet<Texture2D>();
+        foreach (Texture2D texture in servant.Textures)
+            if (texture != null) all.Add(texture);
+
+        foreach (Renderer renderer in servant.BodyMain.GetComponentsInChildren<Renderer>(true))
             foreach (Material material in renderer.sharedMaterials)
                 if (material != null)
                     foreach (string property in material.GetTexturePropertyNames())
                     {
                         Texture2D texture = material.GetTexture(property) as Texture2D;
-                        if (texture != null && !remap.ContainsKey(texture)) { ExportObject(texture, folder, remap); count++; }
+                        if (texture != null) all.Add(texture);
                     }
-        return count;
+
+        foreach (Texture2D texture in all)
+        {
+            string targetFolder = texture.name.StartsWith("ef_", StringComparison.OrdinalIgnoreCase)
+                ? effectsFolder
+                : characterFolder;
+            ExportObject(texture, targetFolder, remap);
+        }
+        return all.Count;
     }
 
-    private static int ExportMaterials(IEnumerable<Material> materials, string folder, Dictionary<UnityEngine.Object, UnityEngine.Object> remap)
+    private static int ExportMaterials(
+        FateServantContainer servant,
+        string folder,
+        Dictionary<UnityEngine.Object, UnityEngine.Object> remap)
     {
-        HashSet<Material> all = new HashSet<Material>(materials.Where(m => m != null));
-        FateServantContainer servant = Selection.activeGameObject.GetComponent<FateServantContainer>();
+        HashSet<Material> all = new HashSet<Material>(servant.Materials.Where(m => m != null));
         foreach (Renderer renderer in servant.BodyMain.GetComponentsInChildren<Renderer>(true))
             foreach (Material material in renderer.sharedMaterials)
                 if (material != null) all.Add(material);
@@ -396,15 +420,16 @@ public static class FGOCharacterAssetExporter
         }
     }
 
-    private static void CreateFolders(string path)
+    private static string EnsureAssetFolder(string parent, string name)
     {
-        string current = "Assets";
-        foreach (string part in path.Substring("Assets/".Length).Split('/'))
+        string path = parent.TrimEnd('/') + "/" + name;
+        if (!AssetDatabase.IsValidFolder(path))
         {
-            string next = current + "/" + part;
-            if (!AssetDatabase.IsValidFolder(next)) AssetDatabase.CreateFolder(current, part);
-            current = next;
+            string guid = AssetDatabase.CreateFolder(parent, name);
+            if (string.IsNullOrEmpty(guid) || !AssetDatabase.IsValidFolder(path))
+                throw new InvalidOperationException("无法创建导出分类目录：" + path);
         }
+        return path;
     }
 
     private static string MakeSafeName(string value)
