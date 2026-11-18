@@ -168,6 +168,7 @@ public static class FGOCharacterAssetExporter
             string animationEventReport = BuildAnimationEventReport(exportedStates, assetMap);
             string animationCurveReport = BuildAnimationCurveBindingReport(exportedStates, savedPrefab.transform);
             string animationClipIntegrityReport = BuildAnimationClipIntegrityReport(assetMap);
+            string materialTextureIntegrityReport = BuildMaterialTextureIntegrityReport(assetMap);
             string animatorSettingsReport = BuildAnimatorSettingsReport(sourceAnimator, savedPrefabAnimator);
 
             int copiedComponentCount = componentAudit.Count(item => item.Contains(" | COPIED"));
@@ -200,6 +201,7 @@ public static class FGOCharacterAssetExporter
                 "Initial Animation: " + initialAnimation + "\n" +
                 "Animator Settings Audit:\n" + animatorSettingsReport + "\n\n" +
                 "Animation Clip Integrity Audit:\n" + animationClipIntegrityReport + "\n\n" +
+                "Material Texture Integrity Audit:\n" + materialTextureIntegrityReport + "\n\n" +
                 "Avatar: " + (sourceAnimator.avatar != null ? "Copied" : "Source Animator has no Avatar") + "\n\n" +
                 "Animation Curve Binding Audit:\n" + animationCurveReport + "\n\n" +
                 "Animation Event Audit:\n" + animationEventReport + "\n\n" +
@@ -542,6 +544,68 @@ public static class FGOCharacterAssetExporter
 
         lines.Insert(0, "Animation clips checked: " + clipCount + " | metadata/count mismatches: " + mismatchCount);
         return lines.Count == 1 ? lines[0] + "\nNo exported AnimationClip assets found." : string.Join("\n", lines);
+    }
+
+    private static string BuildMaterialTextureIntegrityReport(
+        Dictionary<UnityEngine.Object, UnityEngine.Object> assetMap)
+    {
+        List<string> lines = new List<string>();
+        int checkedSlots = 0;
+        int mismatchCount = 0;
+        int missingMapCount = 0;
+
+        foreach (KeyValuePair<UnityEngine.Object, UnityEngine.Object> pair in assetMap)
+        {
+            Material source = pair.Key as Material;
+            Material exported = pair.Value as Material;
+            if (source == null || exported == null)
+                continue;
+
+            foreach (string propertyName in source.GetTexturePropertyNames())
+            {
+                checkedSlots++;
+                Texture sourceTexture = source.GetTexture(propertyName);
+                bool targetHasProperty = exported.HasProperty(propertyName);
+                Texture exportedTexture = targetHasProperty
+                    ? exported.GetTexture(propertyName)
+                    : null;
+
+                UnityEngine.Object mappedObject = null;
+                bool hasMapping = sourceTexture == null ||
+                    assetMap.TryGetValue(sourceTexture, out mappedObject);
+                Texture expectedTexture = mappedObject as Texture;
+                string status;
+
+                if (!targetHasProperty)
+                    status = "TARGET_PROPERTY_MISSING";
+                else if (sourceTexture != null && !hasMapping)
+                {
+                    status = "TEXTURE_NOT_EXPORTED";
+                    missingMapCount++;
+                }
+                else if (exportedTexture != expectedTexture)
+                    status = "REFERENCE_MISMATCH";
+                else
+                    status = "MATCH";
+
+                if (status != "MATCH")
+                    mismatchCount++;
+
+                lines.Add(
+                    source.name + " -> " + exported.name +
+                    " | property=" + propertyName +
+                    " | source=" + (sourceTexture != null ? sourceTexture.name + "#" + sourceTexture.GetInstanceID() : "NULL") +
+                    " | expected=" + (expectedTexture != null ? expectedTexture.name + "#" + expectedTexture.GetInstanceID() : "NULL") +
+                    " | actual=" + (exportedTexture != null ? exportedTexture.name + "#" + exportedTexture.GetInstanceID() : "NULL") +
+                    " | " + status);
+            }
+        }
+
+        lines.Insert(0,
+            "Texture slots checked: " + checkedSlots +
+            " | mismatches: " + mismatchCount +
+            " | textures without exported mapping: " + missingMapCount);
+        return string.Join("\n", lines);
     }
 
     private static string BuildAnimatorSettingsReport(Animator source, Animator exported)
