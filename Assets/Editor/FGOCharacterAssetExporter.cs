@@ -74,18 +74,22 @@ public static class FGOCharacterAssetExporter
                     {
                         RuntimeAnimatorController copiedController = AssetDatabase.LoadAssetAtPath<RuntimeAnimatorController>(copiedControllerPath);
                         AnimatorOverrideController exportedOverride = new AnimatorOverrideController(copiedController);
+                        List<KeyValuePair<AnimationClip, AnimationClip>> exportedOverrides =
+                            new List<KeyValuePair<AnimationClip, AnimationClip>>();
+                        exportedOverride.GetOverrides(exportedOverrides);
                         List<KeyValuePair<AnimationClip, AnimationClip>> sourceOverrides =
                             new List<KeyValuePair<AnimationClip, AnimationClip>>();
                         if (servant.OverrideController != null)
                             servant.OverrideController.GetOverrides(sourceOverrides);
-                        List<KeyValuePair<AnimationClip, AnimationClip>> exportedOverrides =
-                            new List<KeyValuePair<AnimationClip, AnimationClip>>();
-                        foreach (KeyValuePair<AnimationClip, AnimationClip> pair in sourceOverrides)
+                        for (int i = 0; i < exportedOverrides.Count; i++)
                         {
-                            AnimationClip replacement = pair.Value;
-                            if (replacement != null && remap.ContainsKey(replacement))
-                                replacement = (AnimationClip)remap[replacement];
-                            exportedOverrides.Add(new KeyValuePair<AnimationClip, AnimationClip>(pair.Key, replacement));
+                            AnimationClip sourceReplacement = sourceOverrides
+                                .FirstOrDefault(pair => pair.Key != null && exportedOverrides[i].Key != null &&
+                                    pair.Key.name == exportedOverrides[i].Key.name).Value;
+                            AnimationClip replacement = sourceReplacement != null && remap.ContainsKey(sourceReplacement)
+                                ? (AnimationClip)remap[sourceReplacement]
+                                : sourceReplacement;
+                            exportedOverrides[i] = new KeyValuePair<AnimationClip, AnimationClip>(exportedOverrides[i].Key, replacement);
                         }
                         exportedOverride.ApplyOverrides(exportedOverrides);
                         AssetDatabase.CreateAsset(exportedOverride, characterFolder + "/Character_AnimatorOverride.overrideController");
