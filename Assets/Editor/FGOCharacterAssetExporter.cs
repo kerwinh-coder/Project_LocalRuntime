@@ -158,6 +158,7 @@ public static class FGOCharacterAssetExporter
                 entry.clip.frameRate.ToString("0.##") + " fps)"));
 
             string animationEventReport = BuildAnimationEventReport(exportedStates, assetMap);
+            string animationCurveReport = BuildAnimationCurveBindingReport(exportedStates, prefabSource.transform);
 
             int copiedComponentCount = componentAudit.Count(item => item.Contains(" | COPIED"));
             int excludedComponentCount = componentAudit.Count(item => item.Contains(" | INTENTIONALLY EXCLUDED"));
@@ -188,6 +189,7 @@ public static class FGOCharacterAssetExporter
                 "Animator Slot: " + AnimationSlotName + "\n" +
                 "Initial Animation: " + initialAnimation + "\n" +
                 "Avatar: " + (sourceAnimator.avatar != null ? "Copied" : "Source Animator has no Avatar") + "\n\n" +
+                "Animation Curve Binding Audit:\n" + animationCurveReport + "\n\n" +
                 "Animation Event Audit:\n" + animationEventReport + "\n\n" +
                 "Animation States:\n" + stateReport + "\n\n" +
                 "Dependency note: Meshes, textures, materials, supported FateViewer shaders, clips and a minimal Animator Controller " +
@@ -478,6 +480,70 @@ public static class FGOCharacterAssetExporter
         }
 
         return result;
+    private static string BuildAnimationCurveBindingReport(
+        IEnumerable<FGOCharacterAnimationPlayer.ClipEntry> states,
+        Transform exportedRoot)
+    {
+        List<string> lines = new List<string>();
+        int totalFloatBindings = 0;
+        int totalObjectBindings = 0;
+        int missingPathCount = 0;
+
+        foreach (FGOCharacterAnimationPlayer.ClipEntry entry in states)
+        {
+            if (entry == null || entry.clip == null)
+                continue;
+
+            EditorCurveBinding[] floatBindings = AnimationUtility.GetCurveBindings(entry.clip);
+            EditorCurveBinding[] objectBindings = AnimationUtility.GetObjectReferenceCurveBindings(entry.clip);
+            totalFloatBindings += floatBindings.Length;
+            totalObjectBindings += objectBindings.Length;
+
+            lines.Add(entry.stateName + " / " + entry.clip.name +
+                " | float curves=" + floatBindings.Length +
+                " | object-reference curves=" + objectBindings.Length);
+
+            foreach (EditorCurveBinding binding in floatBindings)
+            {
+                if (HasAnimationBindingPath(exportedRoot, binding.path))
+                    continue;
+
+                missingPathCount++;
+                lines.Add("  MISSING FLOAT PATH: " + (string.IsNullOrEmpty(binding.path) ? "<root>" : binding.path) +
+                    " | property=" + binding.propertyName + " | type=" + binding.type);
+            }
+
+            foreach (EditorCurveBinding binding in objectBindings)
+            {
+                if (HasAnimationBindingPath(exportedRoot, binding.path))
+                    continue;
+
+                missingPathCount++;
+                lines.Add("  MISSING OBJECT PATH: " + (string.IsNullOrEmpty(binding.path) ? "<root>" : binding.path) +
+                    " | property=" + binding.propertyName + " | type=" + binding.type);
+            }
+        }
+
+        lines.Insert(0,
+            "Total float curves: " + totalFloatBindings +
+            " | total object-reference curves: " + totalObjectBindings +
+            " | missing hierarchy paths: " + missingPathCount);
+
+        return lines.Count == 1 ? lines[0] + "\\nNo animation states to audit." : string.Join("\\n", lines);
+    }
+
+    private static bool HasAnimationBindingPath(Transform root, string path)
+    {
+        if (root == null)
+            return false;
+
+        if (string.IsNullOrEmpty(path))
+            return true;
+
+        return root.Find(path) != null;
+    }
+
+
     }
 
     private static string BuildAnimationEventReport(
