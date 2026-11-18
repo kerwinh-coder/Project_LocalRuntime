@@ -52,12 +52,10 @@ public static class FGOCharacterAssetExporter
             int materialCount = ExportMaterials(servant.Materials, characterFolder, remap);
             int clipCount = ExportClips(servant.AnimationClips, characterFolder, remap);
 
-            GameObject prefabSource = UnityEngine.Object.Instantiate(source);
-            prefabSource.name = source.name;
+            Dictionary<UnityEngine.Object, UnityEngine.Object> hierarchyMap;
+            GameObject prefabSource = BuildCleanExportHierarchy(source, out hierarchyMap);
+            RemapSerializedReferences(hierarchyMap);
             RemapHierarchyAssets(prefabSource, remap);
-            foreach (SimpleAnimation simpleAnimation in prefabSource.GetComponentsInChildren<SimpleAnimation>(true))
-                UnityEngine.Object.DestroyImmediate(simpleAnimation);
-            StripUnsupportedBattleComponents(prefabSource);
 
             Animator sourceAnimator = source.GetComponentInChildren<Animator>(true);
             Animator targetAnimator = prefabSource.GetComponentInChildren<Animator>(true);
@@ -253,32 +251,119 @@ public static class FGOCharacterAssetExporter
         }
     }
 
-    // Remove ordinary missing MonoBehaviours from the exported clone.
-    // Do not edit GameObject.m_Component through SerializedProperty: Unity exposes
-    // this native-owned array as read-only in supported editor versions.
-    private static void StripUnsupportedBattleComponents(GameObject root)
+    // Rebuild the hierarchy instead of cloning it. This deliberately avoids carrying
+    // invalid serialized script entries (including non-MonoBehaviour script records)
+    // from AssetBundle instances into the exported Prefab.
+    private static GameObject BuildCleanExportHierarchy(
+        GameObject sourceRoot,
+        out Dictionary<UnityEngine.Object, UnityEngine.Object> objectMap)
     {
-        foreach (Transform child in root.GetComponentsInChildren<Transform>(true))
+        objectMap = new Dictionary<UnityEngine.Object, UnityEngine.Object>();
+        Dictionary<Transform, Transform> transformMap = new Dictionary<Transform, Transform>();
+        Dictionary<Component, Component> componentMap = new Dictionary<Component, Component>();
+
+        GameObject targetRoot = new GameObject(sourceRoot.name);
+        CopyTransformValues(sourceRoot.transform, targetRoot.transform);
+        objectMap[sourceRoot.transform] = targetRoot.transform;
+        transformMap[sourceRoot.transform] = targetRoot.transform;
+
+        CopyChildrenRecursive(sourceRoot.transform, targetRoot.transform, objectMap, transformMap, componentMap);
+        RemapSerializedReferences(objectMap);
+
+        return targetRoot;
+    }
+
+    private static void CopyChildrenRecursive(
+        Transform sourceParent,
+        Transform targetParent,
+        Dictionary<UnityEngine.Object, UnityEngine.Object> objectMap,
+        Dictionary<Transform, Transform> transformMap,
+        Dictionary<Component, Component> componentMap)
+    {
+        foreach (Transform sourceChild in sourceParent)
         {
-            GameObject go = child.gameObject;
+            GameObject targetObject = new GameObject(sourceChild.gameObject.name);
+            Transform targetTransform = targetObject.transform;
+            targetTransform.SetParent(targetParent, false);
+            CopyTransformValues(sourceChild, targetTransform);
+            objectMap[sourceChild] = targetTransform;
+            transformMap[sourceChild] = targetTransform;
 
-            foreach (Component component in go.GetComponents<Component>())
-            {
-                if (component != null && component.GetType().Name == "BattleServantDeadComponent")
-                    UnityEngine.Object.DestroyImmediate(component, true);
-            }
-
-            GameObjectUtility.RemoveMonoBehavioursWithMissingScript(go);
+            CopyChildrenRecursive(sourceChild, targetTransform, objectMap, transformMap, componentMap);
         }
 
-        foreach (Transform child in root.GetComponentsInChildren<Transform>(true))
+        GameObject targetGameObject = targetParent.gameObject;
+        GameObject sourceGameObject = sourceParent.gameObject;
+        foreach (Component sourceComponent in sourceGameObject.GetComponents<Component>())
         {
-            int missingCount = GameObjectUtility.GetMonoBehavioursWithMissingScriptCount(child.gameObject);
-            if (missingCount > 0)
-                throw new InvalidOperationException(
-                    "导出副本仍有 " + missingCount +
-                    " 个 Missing MonoBehaviour，Unity 无法安全保存 Prefab。对象：" +
-                    child.name + "。本次已停止导出，未尝试修改 Unity 内部 m_Component 数据。");
+            // Null entries are intentionally skipped: these are where Unity exposes
+            // unsupported/missing serialized script records on some AssetBundle objects.
+            if (sourceComponent == null) continue;
+            Type type = sourceComponent.GetType();
+            if (type == typeof(Transform) || type == typeof(SimpleAnimation)) continue;
+            if (type.Name == "BattleServantDeadComponent") continue;
+
+            try
+            {
+                Component targetComponent = targetGameObject.AddComponent(type);
+                if (targetComponent == null)
+                {
+                    Debug.LogWarning("[FGO Export] Could not add component: " + type.FullName +
+                        " on " + GetHierarchyPath(sourceParent));
+                    continue;
+                }
+                EditorUtility.CopySerialized(sourceComponent, targetComponent);
+                objectMap[sourceComponent] = targetComponent;
+                componentMap[sourceComponent] = targetComponent;
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning("[FGO Export] Skipped component " + type.FullName +
+                    " on " + GetHierarchyPath(sourceParent) + ": " + exception.Message);
+            }
+        }
+    }
+
+    private static void CopyTransformValues(Transform source, Transform target)
+    {
+        target.localPosition = source.localPosition;
+        target.localRotation = source.localRotation;
+        target.localScale = source.localScale;
+        target.localEulerAngles = source.localEulerAngles;
+    }
+
+    private static string GetHierarchyPath(Transform transform)
+    {
+        string path = transform.name;
+        while (transform.parent != null)
+        {
+            transform = transform.parent;
+            path = transform.name + "/" + path;
+        }
+        return path;
+    }
+
+    private static void RemapSerializedReferences(Dictionary<UnityEngine.Object, UnityEngine.Object> objectMap)
+    {
+        foreach (UnityEngine.Object targetObject in objectMap.Values.Distinct())
+        {
+            Component component = targetObject as Component;
+            if (component == null) continue;
+
+            SerializedObject serializedObject = new SerializedObject(component);
+            SerializedProperty property = serializedObject.GetIterator();
+            bool changed = false;
+            while (property.Next(true))
+            {
+                if (property.propertyType != SerializedPropertyType.ObjectReference) continue;
+                UnityEngine.Object reference = property.objectReferenceValue;
+                if (reference != null && objectMap.TryGetValue(reference, out UnityEngine.Object replacement))
+                {
+                    property.objectReferenceValue = replacement;
+                    changed = true;
+                }
+            }
+            if (changed) serializedObject.ApplyModifiedPropertiesWithoutUndo();
         }
     }
 
