@@ -57,6 +57,7 @@ public static class FGOCharacterAssetExporter
             RemapHierarchyAssets(prefabSource, remap);
             foreach (SimpleAnimation simpleAnimation in prefabSource.GetComponentsInChildren<SimpleAnimation>(true))
                 UnityEngine.Object.DestroyImmediate(simpleAnimation);
+            StripUnsupportedBattleComponents(prefabSource);
 
             Animator sourceAnimator = source.GetComponentInChildren<Animator>(true);
             Animator targetAnimator = prefabSource.GetComponentInChildren<Animator>(true);
@@ -188,7 +189,11 @@ public static class FGOCharacterAssetExporter
         if (string.IsNullOrEmpty(folder) || !AssetDatabase.IsValidFolder(folder))
             throw new InvalidOperationException("导出目标文件夹无效：" + (folder ?? "<null>"));
 
-        T copy = UnityEngine.Object.Instantiate(source);
+        T copy;
+        if (source is Texture2D)
+            copy = (T)(UnityEngine.Object)CopyTextureReadable((Texture2D)(UnityEngine.Object)source);
+        else
+            copy = UnityEngine.Object.Instantiate(source);
         copy.name = string.IsNullOrEmpty(source.name) ? source.GetType().Name : source.name;
         string extension = source is AnimationClip ? ".anim" : source is Material ? ".mat" : ".asset";
         string basePath = folder.TrimEnd('/') + "/" + MakeSafeName(copy.name) + extension;
@@ -208,6 +213,46 @@ public static class FGOCharacterAssetExporter
         {
             UnityEngine.Object.DestroyImmediate(copy);
             throw;
+        }
+    }
+
+    // AssetBundles often contain GPU-only textures with Read/Write disabled.
+    // Blit through a temporary RenderTexture so they can be exported as readable assets.
+    private static Texture2D CopyTextureReadable(Texture2D source)
+    {
+        RenderTexture temporary = RenderTexture.GetTemporary(
+            source.width, source.height, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Default);
+        RenderTexture previous = RenderTexture.active;
+        Texture2D copy = null;
+        try
+        {
+            Graphics.Blit(source, temporary);
+            RenderTexture.active = temporary;
+            copy = new Texture2D(source.width, source.height, TextureFormat.RGBA32, false);
+            copy.name = source.name;
+            copy.ReadPixels(new Rect(0, 0, source.width, source.height), 0, 0, false);
+            copy.Apply(false, false);
+            return copy;
+        }
+        catch
+        {
+            if (copy != null) UnityEngine.Object.DestroyImmediate(copy);
+            throw;
+        }
+        finally
+        {
+            RenderTexture.active = previous;
+            RenderTexture.ReleaseTemporary(temporary);
+        }
+    }
+
+    // This legacy gameplay component is not a MonoBehaviour and cannot be serialized into a Prefab.
+    private static void StripUnsupportedBattleComponents(GameObject root)
+    {
+        foreach (Component component in root.GetComponentsInChildren<Component>(true))
+        {
+            if (component != null && component.GetType().Name == "BattleServantDeadComponent")
+                UnityEngine.Object.DestroyImmediate(component);
         }
     }
 
