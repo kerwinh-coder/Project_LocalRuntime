@@ -192,7 +192,8 @@ public static class FGOCharacterAssetExporter
                 "Animation States:\n" + stateReport + "\n\n" +
                 "Dependency note: Meshes, textures, materials, supported FateViewer shaders, clips and a minimal Animator Controller " +
                 "are exported. Unity built-in shaders remain engine dependencies. Any external component dependencies " +
-                "must still be checked in a clean Unity project; this report does not claim complete dependency closure.\n");
+                "must still be checked in a clean Unity project; this report does not claim complete dependency closure. " +
+                "AnimationEvent object references are listed in the audit but are not automatically exported or remapped.\n");
 
             AssetDatabase.ImportAsset(reportPath);
             AssetDatabase.SaveAssets();
