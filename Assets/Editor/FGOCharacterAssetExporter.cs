@@ -99,7 +99,7 @@ public static class FGOCharacterAssetExporter
             PrefabUtility.SaveAsPrefabAsset(prefabSource, prefabPath);
             UnityEngine.Object.DestroyImmediate(prefabSource);
 
-            string stateReport = string.Join("\\n", servant.AnimationClips
+            string stateReport = string.Join("\n", servant.AnimationClips
                 .Where(state => state != null && state.clip != null)
                 .Select(state => state.name + " -> " + state.clip.name));
             string reportPath = characterFolder + "/ExportReport.txt";
@@ -111,7 +111,7 @@ public static class FGOCharacterAssetExporter
                 "Meshes: " + meshCount + "\nTextures: " + textureCount +
                 "\nMaterials: " + materialCount + "\nAnimation Clips: " + clipCount +
                 "\n" + controllerNote + "\n\n" +
-                "依赖检查提示：材质 Shader、Animator Controller 的间接引用、Avatar、脚本及其他外部资源仍需在独立工程验证。此报告不代表依赖已完全自包含。");
+                "Animation States:\\n" + stateReport + "\\n\\n" +\n                "依赖检查提示：材质 Shader、Animator Controller 的间接引用、Avatar、脚本及其他外部资源仍需在独立工程验证。此报告不代表依赖已完全自包含。");
             AssetDatabase.Refresh();
             UnityEngine.Object prefab = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
             Selection.activeObject = prefab;
