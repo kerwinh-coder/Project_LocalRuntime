@@ -24,13 +24,14 @@ public static class FGOCharacterAssetExporter
             return;
         }
 
-        string selectedFolder = EditorUtility.SaveFolderPanel("选择导出目录（必须位于当前 Unity 工程 Assets 内）",
-            Application.dataPath, "FGO_Character_Export");
+        string selectedFolder = EditorUtility.SaveFolderPanel("选择导出文件夹（全部导出文件直接保存到此文件夹，不会新建子文件夹）",
+            Application.dataPath, "");
         if (string.IsNullOrEmpty(selectedFolder)) return;
 
         string folder = selectedFolder.Replace("\\", "/");
         string assetsRoot = Application.dataPath.Replace("\\", "/");
-        if (!folder.StartsWith(assetsRoot, StringComparison.OrdinalIgnoreCase))
+        if (!folder.Equals(assetsRoot, StringComparison.OrdinalIgnoreCase) &&
+            !folder.StartsWith(assetsRoot + "/", StringComparison.OrdinalIgnoreCase))
         {
             EditorUtility.DisplayDialog("FGO Asset Export", "导出目录必须位于当前工程的 Assets 文件夹内。", "OK");
             return;
@@ -54,7 +55,6 @@ public static class FGOCharacterAssetExporter
 
             Dictionary<UnityEngine.Object, UnityEngine.Object> hierarchyMap;
             GameObject prefabSource = BuildCleanExportHierarchy(source, out hierarchyMap);
-            RemapSerializedReferences(hierarchyMap);
             RemapHierarchyAssets(prefabSource, remap);
 
             Animator sourceAnimator = source.GetComponentInChildren<Animator>(true);
@@ -263,6 +263,7 @@ public static class FGOCharacterAssetExporter
         Dictionary<Component, Component> componentMap = new Dictionary<Component, Component>();
 
         GameObject targetRoot = new GameObject(sourceRoot.name);
+        objectMap[sourceRoot] = targetRoot;
         CopyTransformValues(sourceRoot.transform, targetRoot.transform);
         objectMap[sourceRoot.transform] = targetRoot.transform;
         transformMap[sourceRoot.transform] = targetRoot.transform;
@@ -286,6 +287,7 @@ public static class FGOCharacterAssetExporter
             Transform targetTransform = targetObject.transform;
             targetTransform.SetParent(targetParent, false);
             CopyTransformValues(sourceChild, targetTransform);
+            objectMap[sourceChild.gameObject] = targetObject;
             objectMap[sourceChild] = targetTransform;
             transformMap[sourceChild] = targetTransform;
 
