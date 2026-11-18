@@ -151,6 +151,11 @@ public static class FGOCharacterAssetExporter
             if (savedPrefab == null)
                 throw new InvalidOperationException("Unity 未能保存导出 Prefab。");
 
+            // Audit the persisted prefab asset, not only the temporary scene hierarchy.
+            Animator savedPrefabAnimator = savedPrefab.GetComponentInChildren<Animator>(true);
+            if (savedPrefabAnimator == null)
+                throw new InvalidOperationException("保存后的 Prefab 中找不到 Animator。");
+
             string reportPath = assetFolder + "/ExportReport.txt";
             string stateReport = string.Join("\n", exportedStates.Select(entry =>
                 entry.stateName + " -> " + entry.clip.name +
@@ -158,8 +163,8 @@ public static class FGOCharacterAssetExporter
                 entry.clip.frameRate.ToString("0.##") + " fps)"));
 
             string animationEventReport = BuildAnimationEventReport(exportedStates, assetMap);
-            string animationCurveReport = BuildAnimationCurveBindingReport(exportedStates, prefabSource.transform);
-            string animatorSettingsReport = BuildAnimatorSettingsReport(sourceAnimator, targetAnimator);
+            string animationCurveReport = BuildAnimationCurveBindingReport(exportedStates, savedPrefab.transform);
+            string animatorSettingsReport = BuildAnimatorSettingsReport(sourceAnimator, savedPrefabAnimator);
 
             int copiedComponentCount = componentAudit.Count(item => item.Contains(" | COPIED"));
             int excludedComponentCount = componentAudit.Count(item => item.Contains(" | INTENTIONALLY EXCLUDED"));
