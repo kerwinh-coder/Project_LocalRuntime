@@ -94,6 +94,7 @@ public static class FGOCharacterAssetExporter
         try
         {
             GameObject source = servant.BodyMain;
+            LogMaterialReferenceDiagnostics(servant, source, "SOURCE_BEFORE_EXPORT");
             Dictionary<UnityEngine.Object, UnityEngine.Object> assetMap =
                 new Dictionary<UnityEngine.Object, UnityEngine.Object>();
 
@@ -109,6 +110,7 @@ public static class FGOCharacterAssetExporter
             Dictionary<UnityEngine.Object, UnityEngine.Object> hierarchyMap;
             prefabSource = BuildCleanExportHierarchy(source, out hierarchyMap);
             RemapHierarchyAssets(prefabSource, assetMap);
+            LogMaterialReferenceDiagnostics(servant, prefabSource, "EXPORT_AFTER_REMAP");
 
             Animator sourceAnimator = source.GetComponentInChildren<Animator>(true);
             Animator targetAnimator = prefabSource.GetComponentInChildren<Animator>(true);
@@ -199,6 +201,65 @@ public static class FGOCharacterAssetExporter
             if (prefabSource != null)
                 UnityEngine.Object.DestroyImmediate(prefabSource);
         }
+    }
+
+    // Temporary diagnostics: compare live source references with exported asset references.
+    private static void LogMaterialReferenceDiagnostics(
+        FateServantContainer servant,
+        GameObject root,
+        string stage)
+    {
+        HashSet<Material> materials = new HashSet<Material>();
+        if (servant != null)
+            foreach (Material material in servant.Materials)
+                if (material != null) materials.Add(material);
+
+        foreach (Renderer renderer in root.GetComponentsInChildren<Renderer>(true))
+        {
+            Material[] rendererMaterials = renderer.sharedMaterials;
+            foreach (Material material in rendererMaterials)
+                if (material != null) materials.Add(material);
+
+            for (int i = 0; i < rendererMaterials.Length; i++)
+            {
+                Material material = rendererMaterials[i];
+                if (material == null) continue;
+                bool alsoInServantList = servant != null && servant.Materials.Contains(material);
+                Debug.Log("[FGO MaterialDiag][" + stage + "] Renderer=" +
+                    GetHierarchyPath(renderer.transform) + " slot=" + i +
+                    " material=" + material.name + " materialId=" + material.GetInstanceID() +
+                    " inServantMaterials=" + alsoInServantList, renderer);
+            }
+        }
+
+        foreach (Material material in materials)
+        {
+            string textureDetails = "";
+            foreach (string propertyName in material.GetTexturePropertyNames())
+            {
+                Texture texture = material.GetTexture(propertyName);
+                textureDetails += " [" + propertyName + "=" +
+                    (texture != null
+                        ? texture.name + "#" + texture.GetInstanceID()
+                        : "NULL") + "]";
+            }
+
+            Debug.Log("[FGO MaterialDiag][" + stage + "] Material=" +
+                material.name + " id=" + material.GetInstanceID() +
+                " shader=" + (material.shader != null ? material.shader.name : "NULL") +
+                textureDetails, material);
+        }
+    }
+
+    private static string GetHierarchyPath(Transform transform)
+    {
+        string path = transform.name;
+        while (transform.parent != null)
+        {
+            transform = transform.parent;
+            path = transform.name + "/" + path;
+        }
+        return path;
     }
 
     private static int ExportMeshes(
