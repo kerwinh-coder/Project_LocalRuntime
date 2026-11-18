@@ -110,6 +110,7 @@ public static class FGOCharacterAssetExporter
 
             Dictionary<UnityEngine.Object, UnityEngine.Object> hierarchyMap;
             prefabSource = BuildCleanExportHierarchy(source, out hierarchyMap);
+            RemapSerializedAssetReferences(prefabSource, assetMap);
             RemapHierarchyAssets(prefabSource, assetMap);
             LogMaterialReferenceDiagnostics(servant, prefabSource, "EXPORT_AFTER_REMAP");
 
@@ -737,6 +738,56 @@ public static class FGOCharacterAssetExporter
             if (changed)
                 serializedObject.ApplyModifiedPropertiesWithoutUndo();
         }
+    }
+
+    private static void RemapSerializedAssetReferences(
+        GameObject root,
+        Dictionary<UnityEngine.Object, UnityEngine.Object> assetMap)
+    {
+        int remappedReferenceCount = 0;
+
+        foreach (Component component in root.GetComponentsInChildren<Component>(true))
+        {
+            if (component == null)
+                continue;
+
+            SerializedObject serializedObject = new SerializedObject(component);
+            SerializedProperty property = serializedObject.GetIterator();
+            bool changed = false;
+
+            while (property.Next(true))
+            {
+                if (property.propertyType != SerializedPropertyType.ObjectReference)
+                    continue;
+
+                UnityEngine.Object sourceReference = property.objectReferenceValue;
+                UnityEngine.Object exportedReference;
+                if (sourceReference == null ||
+                    !assetMap.TryGetValue(sourceReference, out exportedReference))
+                    continue;
+
+                property.objectReferenceValue = exportedReference;
+                changed = true;
+                remappedReferenceCount++;
+
+                Debug.Log(
+                    "[FGO Export][SerializedAssetRemap] component=" +
+                    GetHierarchyPath(component.transform) +
+                    " type=" + component.GetType().Name +
+                    " property=" + property.propertyPath +
+                    " source=" + sourceReference.name +
+                    " exported=" + exportedReference.name,
+                    component);
+            }
+
+            if (changed)
+                serializedObject.ApplyModifiedPropertiesWithoutUndo();
+        }
+
+        Debug.Log(
+            "[FGO Export][SerializedAssetRemap] completed references=" +
+            remappedReferenceCount,
+            root);
     }
 
     private static void RemapHierarchyAssets(
