@@ -36,8 +36,10 @@ public sealed class FGOAtlasAssetDownloader : MonoBehaviour
 
     private readonly List<ModelEntry> modelEntries = new List<ModelEntry>();
     private readonly List<string> downloadedBundles = new List<string>();
+    private Vector2 panelScroll;
     private Vector2 entriesScroll;
     private Vector2 downloadedScroll;
+    private GUIStyle wrappedLabelStyle;
     private string region = "JP";
     private string servantId = "100100";
     private string downloadRoot = "";
@@ -66,8 +68,14 @@ public sealed class FGOAtlasAssetDownloader : MonoBehaviour
         float height = Mathf.Max(300f, Screen.height - 24f);
         Rect area = new Rect(x, 12f, width, height);
 
+        if (wrappedLabelStyle == null)
+        {
+            wrappedLabelStyle = new GUIStyle(GUI.skin.label);
+            wrappedLabelStyle.wordWrap = true;
+        }
+
         GUILayout.BeginArea(area, "Atlas 下载到本地", GUI.skin.window);
-        entriesScroll = GUILayout.BeginScrollView(entriesScroll, GUILayout.Width(width - 12f), GUILayout.Height(height - 34f));
+        panelScroll = GUILayout.BeginScrollView(panelScroll, false, true, GUILayout.Width(width - 12f), GUILayout.Height(height - 34f));
         GUILayout.Label("获取 API 元数据 → 选择灵基 / 灵衣 → 下载原始 Bundle 与纹理");
 
         GUILayout.BeginHorizontal();
@@ -121,13 +129,13 @@ public sealed class FGOAtlasAssetDownloader : MonoBehaviour
         {
             GUILayout.Space(6);
             GUILayout.Label("API 返回的模型资源（按实际数据列出）：");
-            entriesScroll = GUILayout.BeginScrollView(entriesScroll, GUILayout.MinHeight(110f), GUILayout.MaxHeight(280f));
+            entriesScroll = GUILayout.BeginScrollView(entriesScroll, false, true, GUILayout.MinHeight(110f), GUILayout.MaxHeight(280f));
             foreach (ModelEntry entry in modelEntries)
             {
                 GUILayout.BeginHorizontal("box");
                 GUILayout.BeginVertical();
                 GUILayout.Label(entry.displayName, GUI.skin.label);
-                GUILayout.Label(entry.manifestUrl, GUI.skin.label);
+                GUILayout.Label(entry.manifestUrl, wrappedLabelStyle, GUILayout.MaxWidth(width - 112f));
                 GUILayout.EndVertical();
                 GUI.enabled = !busy;
                 if (GUILayout.Button("下载", GUILayout.Width(62f), GUILayout.Height(34f)))
@@ -148,13 +156,13 @@ public sealed class FGOAtlasAssetDownloader : MonoBehaviour
             GUILayout.Label("尚无已下载 Bundle。", GUI.skin.box);
         else
         {
-            downloadedScroll = GUILayout.BeginScrollView(downloadedScroll, GUILayout.MinHeight(60f), GUILayout.MaxHeight(170f));
+            downloadedScroll = GUILayout.BeginScrollView(downloadedScroll, false, true, GUILayout.MinHeight(60f), GUILayout.MaxHeight(170f));
             for (int i = downloadedBundles.Count - 1; i >= 0; i--)
             {
                 string path = downloadedBundles[i];
                 if (!File.Exists(path)) continue;
                 GUILayout.BeginHorizontal("box");
-                GUILayout.Label(Path.GetFileName(path), GUILayout.MinWidth(90f));
+                GUILayout.Label(Path.GetFileName(path), wrappedLabelStyle, GUILayout.MinWidth(90f), GUILayout.MaxWidth(width - 170f));
                 GUI.enabled = !busy;
                 if (GUILayout.Button("加载到角色工作台", GUILayout.Width(142f)))
                 {
@@ -164,7 +172,7 @@ public sealed class FGOAtlasAssetDownloader : MonoBehaviour
                 }
                 GUI.enabled = true;
                 GUILayout.EndHorizontal();
-                GUILayout.Label(path, GUI.skin.label);
+                GUILayout.Label(path, wrappedLabelStyle, GUILayout.MaxWidth(width - 24f));
             }
             GUILayout.EndScrollView();
         }
@@ -449,9 +457,15 @@ public sealed class FGOAtlasAssetDownloader : MonoBehaviour
                 string valueString = pair.Value as string;
                 if (valueString != null)
                 {
-                    if (LooksLikeAssetPath(valueString) &&
-                        pair.Key.IndexOf("type", StringComparison.OrdinalIgnoreCase) < 0 &&
-                        pair.Key.IndexOf("kind", StringComparison.OrdinalIgnoreCase) < 0)
+                    bool isTypeField = pair.Key.IndexOf("type", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                        pair.Key.IndexOf("kind", StringComparison.OrdinalIgnoreCase) >= 0;
+                    // Atlas manifests may identify a Modified Unity3D bundle by type
+                    // while providing a bare relative path such as "2501700".
+                    // Accept that path only when the manifest explicitly marks it as a bundle.
+                    bool isTypedBundlePath = pairKind == "bundle" &&
+                                             pair.Key.Equals("path", StringComparison.OrdinalIgnoreCase);
+
+                    if (!isTypeField && (LooksLikeAssetPath(valueString) || isTypedBundlePath))
                     {
                         string inferred = InferKind(valueString, pairKind);
                         if (!string.IsNullOrEmpty(inferred))

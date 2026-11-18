@@ -12,6 +12,7 @@ public class FateNPContainer : MonoBehaviour
     public List<Renderer> Meshes = new List<Renderer>();
     public Animator Animator;
     public AnimatorOverrideController OverrideController;
+    public float PlaybackSpeed = 1f;
 
     public float CurrentFrame = 0;
     public float CurrentFrame2 = 0;
@@ -35,7 +36,7 @@ public class FateNPContainer : MonoBehaviour
     private void Animate()
     {
         Animator.Play("clip", 0, Mathf.Round(CurrentFrame) / ClipFrameCount);
-        CurrentFrame += FateViewerMain.Instance.TimeScale;
+        CurrentFrame += PlaybackSpeed;
         CurrentFrame = (CurrentFrame) % (ClipFrameCount + 1);
     }
 

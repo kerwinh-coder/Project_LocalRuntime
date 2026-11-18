@@ -12,6 +12,7 @@ public class FateServantContainer : MonoBehaviour
     public List<Renderer> Meshes = new List<Renderer>();
     public Animator Animator;
     public AnimatorOverrideController OverrideController;
+    public float PlaybackSpeed = 1f;
 
     public float CurrentFrame = 0;
     public float CurrentFrame2 = 0;
@@ -41,11 +42,11 @@ public class FateServantContainer : MonoBehaviour
         //Debug.Log($"Frame: {CurrentFrame}/{ClipFrameCount}");
         //Debug.Log($"Frame: {CurrentFrame2}/{ClipFrameCount2}");
         Animator.Play("clip", 0, Mathf.Round(CurrentFrame) / ClipFrameCount);
-        CurrentFrame += FateViewerMain.Instance.TimeScale;
+        CurrentFrame += PlaybackSpeed;
         CurrentFrame = (CurrentFrame) % (ClipFrameCount + 1);
 
         //Animator.Play("clip2", 1, Mathf.Round(CurrentFrame2) / ClipFrameCount2);
-        //CurrentFrame2 += FateViewerMain.Instance.TimeScale;
+        //CurrentFrame2 += PlaybackSpeed;
         //CurrentFrame2 = Mathf.Clamp(CurrentFrame2, 0, ClipFrameCount2);
     }
 

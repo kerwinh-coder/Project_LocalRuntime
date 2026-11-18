@@ -36,12 +36,6 @@ public static class FGOCharacterWorkbenchSetup
 
         Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
-        GameObject globals = new GameObject("FGO_RuntimeGlobals");
-        FateViewerMain main = globals.AddComponent<FateViewerMain>();
-        // Awake still establishes the singleton; disabling prevents the original Atlas/UI startup routine.
-        main.enabled = false;
-        main.TimeScale = 1f;
-
         GameObject cameraObject = new GameObject("Main Camera");
         cameraObject.tag = "MainCamera";
         Camera camera = cameraObject.AddComponent<Camera>();
@@ -75,7 +69,7 @@ public static class FGOCharacterWorkbenchSetup
             "独立工作台场景已创建：\n" + ScenePath +
             "\n\n已绑定 AnimatorOverrideController：" + controller.name +
             "\nParticle Material：" + (particleMaterial != null ? particleMaterial.name : "未找到（可后续补充）") +
-            "\n\n场景不使用 FateViewer 原网页 UI；保留 FateViewerMain 的禁用计时桥接，以兼容原 FateServantContainer 动画帧逻辑。",
+            "\n\n场景不使用 FateViewer 原网页 UI，也不再创建 FateViewerMain 计时桥接；动画速度由角色容器独立管理。",
             "OK");
     }
 
