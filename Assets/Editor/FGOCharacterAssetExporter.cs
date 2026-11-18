@@ -157,6 +157,8 @@ public static class FGOCharacterAssetExporter
                 " (" + entry.clip.length.ToString("0.000") + "s, " +
                 entry.clip.frameRate.ToString("0.##") + " fps)"));
 
+            string animationEventReport = BuildAnimationEventReport(exportedStates, assetMap);
+
             int copiedComponentCount = componentAudit.Count(item => item.Contains(" | COPIED"));
             int excludedComponentCount = componentAudit.Count(item => item.Contains(" | INTENTIONALLY EXCLUDED"));
             int failedComponentCount = componentAudit.Count(item => item.Contains(" | FAILED:"));
@@ -186,6 +188,7 @@ public static class FGOCharacterAssetExporter
                 "Animator Slot: " + AnimationSlotName + "\n" +
                 "Initial Animation: " + initialAnimation + "\n" +
                 "Avatar: " + (sourceAnimator.avatar != null ? "Copied" : "Source Animator has no Avatar") + "\n\n" +
+                "Animation Event Audit:\n" + animationEventReport + "\n\n" +
                 "Animation States:\n" + stateReport + "\n\n" +
                 "Dependency note: Meshes, textures, materials, supported FateViewer shaders, clips and a minimal Animator Controller " +
                 "are exported. Unity built-in shaders remain engine dependencies. Any external component dependencies " +
@@ -475,6 +478,48 @@ public static class FGOCharacterAssetExporter
 
         return result;
     }
+
+    private static string BuildAnimationEventReport(
+        IEnumerable<FGOCharacterAnimationPlayer.ClipEntry> states,
+        Dictionary<UnityEngine.Object, UnityEngine.Object> assetMap)
+    {
+        List<string> lines = new List<string>();
+        foreach (FGOCharacterAnimationPlayer.ClipEntry entry in states)
+        {
+            if (entry == null || entry.clip == null)
+                continue;
+
+            AnimationEvent[] events = entry.clip.events;
+            if (events == null || events.Length == 0)
+            {
+                lines.Add(entry.stateName + " / " + entry.clip.name + ": No events");
+                continue;
+            }
+
+            foreach (AnimationEvent animationEvent in events)
+            {
+                UnityEngine.Object reference = animationEvent.objectReferenceParameter;
+                string referenceStatus = reference == null
+                    ? "None"
+                    : (assetMap.ContainsKey(reference)
+                        ? "Source has an exported copy, but event reference remapping is not yet implemented"
+                        : "UNMAPPED EXTERNAL REFERENCE");
+
+                lines.Add(
+                    entry.stateName + " / " + entry.clip.name +
+                    " | time=" + animationEvent.time.ToString("0.000") +
+                    " | function=" + animationEvent.functionName +
+                    " | string=" + animationEvent.stringParameter +
+                    " | object=" + (reference != null
+                        ? reference.name + " (" + reference.GetType().Name + ")"
+                        : "None") +
+                    " | reference status=" + referenceStatus);
+            }
+        }
+
+        return lines.Count == 0 ? "No animation states to audit." : string.Join("\n", lines);
+    }
+
 
     private static string FindInitialAnimation(
         List<FGOCharacterAnimationPlayer.ClipEntry> states)
