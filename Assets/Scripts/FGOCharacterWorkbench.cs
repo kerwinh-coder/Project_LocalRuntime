@@ -557,15 +557,20 @@ public sealed class FGOCharacterWorkbench : MonoBehaviour
                 continue;
             }
 
+            // Capture the source texture before changing shaders. After the shader
+            // assignment, material.mainTexture may refer to the replacement shader's
+            // default property rather than the original material texture.
+            Texture oldMain = material.mainTexture;
+
             if (characterShader != null)
                 material.shader = characterShader;
 
-            Texture oldMain = material.mainTexture;
             if (oldMain != null)
             {
-                Texture2D matched = servant.Textures.FirstOrDefault(t => t != null && t.name == oldMain.name);
-                if (matched != null && material.HasProperty("_MainTex"))
-                    material.SetTexture("_MainTex", matched);
+                // Preserve the exact source texture reference; do not depend on a
+                // name lookup that can fail or select a duplicate-named texture.
+                if (material.HasProperty("_MainTex"))
+                    material.SetTexture("_MainTex", oldMain);
 
                 Texture2D alpha = servant.Textures.FirstOrDefault(t => t != null &&
                     (t.name == oldMain.name + "a" || t.name == oldMain.name + "_alpha"));
