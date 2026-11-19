@@ -4,215 +4,826 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using UnityEditor;
+using UnityEditor.Animations;
 using UnityEngine;
 
 /// <summary>
-/// Exports the currently loaded FGO character as editable Unity assets.
-/// Select the live FateServantContainer in the Hierarchy, then use the menu.
+/// Exports the selected live FateServantContainer as a standalone character prefab.
+/// The exported prefab uses FGOCharacterAnimationPlayer, not FateServantContainer.
 /// </summary>
 public static class FGOCharacterAssetExporter
 {
+    private const string AnimatorStateName = "FGO_Clip";
+    private const string AnimationSlotName = "FGO_Clip_Slot";
+
     [MenuItem("FGO Local Runtime/Export Selected Character Assets")]
     private static void ExportSelectedCharacter()
     {
         FateServantContainer servant = Selection.activeGameObject != null
             ? Selection.activeGameObject.GetComponent<FateServantContainer>()
             : null;
+
         if (servant == null || servant.BodyMain == null)
         {
-            EditorUtility.DisplayDialog("FGO Asset Export", "请在 Hierarchy 中选择当前已加载角色的根对象（包含 FateServantContainer）。", "OK");
+            EditorUtility.DisplayDialog(
+                "FGO Character Export",
+                "请在 Hierarchy 中选择当前已加载角色的根对象（包含 FateServantContainer）。",
+                "OK");
             return;
         }
 
-        string selectedFolder = EditorUtility.SaveFolderPanel("选择导出文件夹（全部导出文件直接保存到此文件夹，不会新建子文件夹）",
-            Application.dataPath, "");
-        if (string.IsNullOrEmpty(selectedFolder)) return;
+        string selectedFolder = EditorUtility.SaveFolderPanel(
+            "选择导出文件夹",
+            Application.dataPath,
+            "");
+
+        if (string.IsNullOrEmpty(selectedFolder))
+            return;
 
         string folder = selectedFolder.Replace("\\", "/");
         string assetsRoot = Application.dataPath.Replace("\\", "/");
         if (!folder.Equals(assetsRoot, StringComparison.OrdinalIgnoreCase) &&
             !folder.StartsWith(assetsRoot + "/", StringComparison.OrdinalIgnoreCase))
         {
-            EditorUtility.DisplayDialog("FGO Asset Export", "导出目录必须位于当前工程的 Assets 文件夹内。", "OK");
+            EditorUtility.DisplayDialog(
+                "FGO Character Export",
+                "导出目录必须位于当前 Unity 工程的 Assets 文件夹内。",
+                "OK");
             return;
         }
 
-        string characterFolder = "Assets" + folder.Substring(assetsRoot.Length);
-        if (!AssetDatabase.IsValidFolder(characterFolder))
+        string parentAssetFolder = "Assets" + folder.Substring(assetsRoot.Length);
+        if (string.IsNullOrEmpty(parentAssetFolder))
+            parentAssetFolder = "Assets";
+
+        if (!AssetDatabase.IsValidFolder(parentAssetFolder))
         {
-            EditorUtility.DisplayDialog("FGO Asset Export", "所选目录不是有效的 Unity Assets 文件夹。", "OK");
+            EditorUtility.DisplayDialog(
+                "FGO Character Export",
+                "所选父目录尚未被 Unity 识别为有效的 Assets 文件夹。请在 Unity Project 窗口中先创建或刷新该父目录，再重新选择。",
+                "OK");
             return;
         }
 
+        // Always place one character export inside its own dedicated folder.
+        // The user selects only an existing parent folder; Unity creates the
+        // character folder so it is immediately registered in AssetDatabase.
+        string characterFolderName = "FGO_Character_" + MakeSafeName(servant.name);
+        string assetFolder = parentAssetFolder.TrimEnd('/') + "/" + characterFolderName;
+        int suffix = 2;
+        while (AssetDatabase.IsValidFolder(assetFolder))
+        {
+            assetFolder = parentAssetFolder.TrimEnd('/') + "/" +
+                characterFolderName + "_" + suffix;
+            suffix++;
+        }
+
+        string createdFolderGuid = AssetDatabase.CreateFolder(
+            parentAssetFolder,
+            Path.GetFileName(assetFolder));
+        if (string.IsNullOrEmpty(createdFolderGuid))
+        {
+            EditorUtility.DisplayDialog(
+                "FGO Character Export",
+                "无法创建角色专属导出文件夹：" + assetFolder,
+                "OK");
+            return;
+        }
+
+        GameObject prefabSource = null;
         try
         {
             GameObject source = servant.BodyMain;
-            Dictionary<UnityEngine.Object, UnityEngine.Object> remap = new Dictionary<UnityEngine.Object, UnityEngine.Object>();
-            int meshCount = ExportMeshes(source, characterFolder, remap);
-            int textureCount = ExportTextures(servant.Textures, characterFolder, remap);
-            int materialCount = ExportMaterials(servant.Materials, characterFolder, remap);
-            int clipCount = ExportClips(servant.AnimationClips, characterFolder, remap);
+            LogMaterialReferenceDiagnostics(servant, source, "SOURCE_BEFORE_EXPORT");
+            Dictionary<UnityEngine.Object, UnityEngine.Object> assetMap =
+                new Dictionary<UnityEngine.Object, UnityEngine.Object>();
+
+            int meshCount = ExportMeshes(source, assetFolder, assetMap);
+            int textureCount = ExportTextures(servant, source, assetFolder, assetMap);
+            int materialCount = ExportMaterials(servant, source, assetFolder, assetMap);
+            List<string> shaderDependencies = ExportShaderDependencies(assetFolder, assetMap);
+            List<FGOCharacterAnimationPlayer.ClipEntry> exportedStates =
+                ExportAnimationClips(servant.AnimationClips, assetFolder, assetMap);
+
+            if (exportedStates.Count == 0)
+                throw new InvalidOperationException("角色没有可导出的 AnimationClip。");
 
             Dictionary<UnityEngine.Object, UnityEngine.Object> hierarchyMap;
-            GameObject prefabSource = BuildCleanExportHierarchy(source, out hierarchyMap);
-            RemapHierarchyAssets(prefabSource, remap);
+            List<string> componentAudit;
+            prefabSource = BuildCleanExportHierarchy(source, out hierarchyMap, out componentAudit);
+            RemapSerializedAssetReferences(prefabSource, assetMap);
+            RemapHierarchyAssets(prefabSource, assetMap);
+            LogMaterialReferenceDiagnostics(servant, prefabSource, "EXPORT_AFTER_REMAP");
 
             Animator sourceAnimator = source.GetComponentInChildren<Animator>(true);
             Animator targetAnimator = prefabSource.GetComponentInChildren<Animator>(true);
-            string controllerNote = "Animator Controller 未复制；请在导出报告中检查控制器依赖。";
-            RuntimeAnimatorController baseController = servant.OverrideController != null
-                ? servant.OverrideController.runtimeAnimatorController
-                : (sourceAnimator != null ? sourceAnimator.runtimeAnimatorController : null);
-            if (baseController != null)
+            if (sourceAnimator == null || targetAnimator == null)
+                throw new InvalidOperationException("角色层级中没有可用的 Animator。");
+
+            if (sourceAnimator.avatar != null)
             {
-                string controllerPath = AssetDatabase.GetAssetPath(baseController);
-                if (!string.IsNullOrEmpty(controllerPath) && controllerPath.EndsWith(".controller", StringComparison.OrdinalIgnoreCase))
-                {
-                    string copiedControllerPath = characterFolder + "/" + Path.GetFileName(controllerPath);
-                    if (AssetDatabase.LoadMainAssetAtPath(copiedControllerPath) != null)
-                        AssetDatabase.DeleteAsset(copiedControllerPath);
-                    if (AssetDatabase.CopyAsset(controllerPath, copiedControllerPath))
-                    {
-                        RuntimeAnimatorController copiedController = AssetDatabase.LoadAssetAtPath<RuntimeAnimatorController>(copiedControllerPath);
-                        AnimatorOverrideController exportedOverride = new AnimatorOverrideController(copiedController);
-                        List<KeyValuePair<AnimationClip, AnimationClip>> exportedOverrides =
-                            new List<KeyValuePair<AnimationClip, AnimationClip>>();
-                        exportedOverride.GetOverrides(exportedOverrides);
-                        List<KeyValuePair<AnimationClip, AnimationClip>> sourceOverrides =
-                            new List<KeyValuePair<AnimationClip, AnimationClip>>();
-                        if (servant.OverrideController != null)
-                            servant.OverrideController.GetOverrides(sourceOverrides);
-                        for (int i = 0; i < exportedOverrides.Count; i++)
-                        {
-                            AnimationClip sourceReplacement = sourceOverrides
-                                .FirstOrDefault(pair => pair.Key != null && exportedOverrides[i].Key != null &&
-                                    pair.Key.name == exportedOverrides[i].Key.name).Value;
-                            AnimationClip replacement = sourceReplacement != null && remap.ContainsKey(sourceReplacement)
-                                ? (AnimationClip)remap[sourceReplacement]
-                                : sourceReplacement;
-                            exportedOverrides[i] = new KeyValuePair<AnimationClip, AnimationClip>(exportedOverrides[i].Key, replacement);
-                        }
-                        exportedOverride.ApplyOverrides(exportedOverrides);
-                        string overridePath = characterFolder + "/Character_AnimatorOverride.overrideController";
-                        if (AssetDatabase.LoadMainAssetAtPath(overridePath) != null)
-                            AssetDatabase.DeleteAsset(overridePath);
-                        AssetDatabase.CreateAsset(exportedOverride, overridePath);
-                        if (targetAnimator != null) targetAnimator.runtimeAnimatorController = exportedOverride;
-                        controllerNote = "基础 Animator Controller 与当前 Override Controller 已复制；原始状态映射已尽可能重定向到导出 Clip。";
-                    }
-                }
+                Avatar exportedAvatar = ExportObject(sourceAnimator.avatar, assetFolder, assetMap);
+                targetAnimator.avatar = exportedAvatar;
             }
 
-            string prefabPath = characterFolder + "/" + MakeSafeName(source.name) + ".prefab";
-            PrefabUtility.SaveAsPrefabAsset(prefabSource, prefabPath);
-            UnityEngine.Object.DestroyImmediate(prefabSource);
+            AnimationClip slotClip;
+            AnimatorController baseController =
+                CreateStandaloneAnimatorController(assetFolder, out slotClip);
 
-            string stateReport = string.Join("\n", servant.AnimationClips
-                .Where(state => state != null && state.clip != null)
-                .Select(state => state.name + " -> " + state.clip.name));
-            string reportPath = characterFolder + "/ExportReport.txt";
-            File.WriteAllText(reportPath,
-                "FGO Character Asset Export\n" +
+            targetAnimator.runtimeAnimatorController = baseController;
+            targetAnimator.speed = 0f;
+            targetAnimator.applyRootMotion = false;
+
+            string initialAnimation = FindInitialAnimation(exportedStates);
+            FGOCharacterAnimationPlayer player =
+                prefabSource.AddComponent<FGOCharacterAnimationPlayer>();
+            player.Configure(
+                targetAnimator,
+                baseController,
+                slotClip,
+                exportedStates,
+                initialAnimation);
+            EditorUtility.SetDirty(player);
+
+            string prefabPath = AssetDatabase.GenerateUniqueAssetPath(
+                assetFolder + "/" + MakeSafeName(source.name) + ".prefab");
+            GameObject savedPrefab = PrefabUtility.SaveAsPrefabAsset(prefabSource, prefabPath);
+            if (savedPrefab == null)
+                throw new InvalidOperationException("Unity 未能保存导出 Prefab。");
+
+            // Audit the persisted prefab asset, not only the temporary scene hierarchy.
+            Animator savedPrefabAnimator = savedPrefab.GetComponentInChildren<Animator>(true);
+            if (savedPrefabAnimator == null)
+                throw new InvalidOperationException("保存后的 Prefab 中找不到 Animator。");
+
+            // Inspect material and texture references after Unity has serialized the prefab asset.
+            LogMaterialReferenceDiagnostics(null, savedPrefab, "SAVED_PREFAB");
+
+            string reportPath = assetFolder + "/ExportReport.txt";
+            string stateReport = string.Join("\n", exportedStates.Select(entry =>
+                entry.stateName + " -> " + entry.clip.name +
+                " (" + entry.clip.length.ToString("0.000") + "s, " +
+                entry.clip.frameRate.ToString("0.##") + " fps)"));
+
+            string animationEventReport = BuildAnimationEventReport(exportedStates, assetMap);
+            string animationCurveReport = BuildAnimationCurveBindingReport(exportedStates, savedPrefab.transform);
+            string animationClipIntegrityReport = BuildAnimationClipIntegrityReport(assetMap);
+            string materialTextureIntegrityReport = BuildMaterialTextureIntegrityReport(assetMap);
+            string animatorSettingsReport = BuildAnimatorSettingsReport(sourceAnimator, savedPrefabAnimator);
+
+            int copiedComponentCount = componentAudit.Count(item => item.Contains(" | COPIED"));
+            int excludedComponentCount = componentAudit.Count(item => item.Contains(" | INTENTIONALLY EXCLUDED"));
+            int failedComponentCount = componentAudit.Count(item => item.Contains(" | FAILED:"));
+            int missingScriptCount = componentAudit.Count(item => item.Contains(" | MISSING SCRIPT COMPONENT"));
+            string componentAuditSummary =
+                "  Copied: " + copiedComponentCount + "\n" +
+                "  Intentionally excluded: " + excludedComponentCount + "\n" +
+                "  Copy failures: " + failedComponentCount + "\n" +
+                "  Missing scripts: " + missingScriptCount + "\n";
+
+            File.WriteAllText(
+                Path.GetFullPath(reportPath),
+                "FGO Standalone Character Export\n" +
                 "Character: " + servant.name + "\n" +
-                "Source Bundle: " + servant.name + "\n" +
+                "Source: FateViewer live character instance\n" +
                 "Prefab: " + prefabPath + "\n" +
-                "Meshes: " + meshCount + "\nTextures: " + textureCount +
-                "\nMaterials: " + materialCount + "\nAnimation Clips: " + clipCount +
-                "\n" + controllerNote + "\n\n" +
+                "Meshes: " + meshCount + "\n" +
+                "Textures: " + textureCount + "\n" +
+                "Materials: " + materialCount + "\n" +
+                "Shader Dependencies:\n" + string.Join("\n", shaderDependencies.Select(item => "  " + item)) + "\n" +
+                "Animation States: " + exportedStates.Count + "\n" +
+                "Unique Animation Clips: " + exportedStates.Select(entry => entry.clip).Distinct().Count() + "\n" +
+                "Animation Driver: FGOCharacterAnimationPlayer\n" +
+                "Component Copy Audit Summary:\n" + componentAuditSummary +
+                "Component Copy Audit Details:\n" + string.Join("\n", componentAudit.Select(item => "  " + item)) + "\n" +
+                "Animator State: " + AnimatorStateName + "\n" +
+                "Animator Slot: " + AnimationSlotName + "\n" +
+                "Initial Animation: " + initialAnimation + "\n" +
+                "Animator Settings Audit:\n" + animatorSettingsReport + "\n\n" +
+                "Animation Clip Integrity Audit:\n" + animationClipIntegrityReport + "\n\n" +
+                "Material Texture Integrity Audit:\n" + materialTextureIntegrityReport + "\n\n" +
+                "Avatar: " + (sourceAnimator.avatar != null ? "Copied" : "Source Animator has no Avatar") + "\n\n" +
+                "Animation Curve Binding Audit:\n" + animationCurveReport + "\n\n" +
+                "Animation Event Audit:\n" + animationEventReport + "\n\n" +
                 "Animation States:\n" + stateReport + "\n\n" +
-                "依赖检查提示：材质 Shader、Animator Controller 的间接引用、Avatar、脚本及其他外部资源仍需在独立工程验证。此报告不代表依赖已完全自包含。");
+                "Dependency note: Meshes, textures, materials, supported FateViewer shaders, clips and a minimal Animator Controller " +
+                "are exported. Unity built-in shaders remain engine dependencies. Any external component dependencies " +
+                "must still be checked in a clean Unity project; this report does not claim complete dependency closure. " +
+                "AnimationEvent object references are listed in the audit but are not automatically exported or remapped.\n");
+
+            AssetDatabase.ImportAsset(reportPath);
+            AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
-            UnityEngine.Object prefab = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
-            Selection.activeObject = prefab;
-            EditorGUIUtility.PingObject(prefab);
-            EditorUtility.DisplayDialog("FGO Asset Export",
-                "第一轮资产导出完成。\nPrefab：" + prefabPath +
-                "\nMesh：" + meshCount + "；Texture：" + textureCount +
-                "；Material：" + materialCount + "；AnimationClip：" + clipCount +
-                "\n\n请先检查导出目录与 ExportReport.txt，再进行独立工程验证。",
+
+            EditorUtility.DisplayDialog(
+                "FGO Character Export",
+                "独立角色 Prefab 已生成。\n\n" +
+                prefabPath + "\n\n" +
+                "动画状态：" + exportedStates.Count + "\n" +
+                "动画驱动：FGOCharacterAnimationPlayer\n" +
+                "初始动作：" + initialAnimation,
                 "OK");
         }
-        catch (Exception ex)
+        catch (Exception exception)
         {
-            Debug.LogException(ex);
-            EditorUtility.DisplayDialog("FGO Asset Export Failed", ex.Message, "OK");
+            Debug.LogException(exception);
+            EditorUtility.DisplayDialog(
+                "FGO Character Export Failed",
+                exception.Message,
+                "OK");
+        }
+        finally
+        {
+            if (prefabSource != null)
+                UnityEngine.Object.DestroyImmediate(prefabSource);
         }
     }
 
-    private static int ExportMeshes(GameObject root, string folder, Dictionary<UnityEngine.Object, UnityEngine.Object> remap)
+    private static void LogSingleMaterialReferenceDiagnostics(Material material, string stage)
     {
-        int count = 0;
+        if (material == null) return;
+
+        string textureDetails = "";
+        foreach (string propertyName in material.GetTexturePropertyNames())
+        {
+            Texture texture = material.GetTexture(propertyName);
+            textureDetails += " [" + propertyName + "=" +
+                (texture != null
+                    ? texture.name + "#" + texture.GetInstanceID()
+                    : "NULL") + "]";
+        }
+
+        Debug.Log("[FGO MaterialDiag][" + stage + "] Material=" +
+            material.name + " id=" + material.GetInstanceID() +
+            " shader=" + (material.shader != null ? material.shader.name : "NULL") +
+            textureDetails, material);
+    }
+
+    // Temporary diagnostics: compare live source references with exported asset references.
+    private static void LogMaterialReferenceDiagnostics(
+        FateServantContainer servant,
+        GameObject root,
+        string stage)
+    {
+        HashSet<Material> materials = new HashSet<Material>();
+        if (servant != null)
+            foreach (Material material in servant.Materials)
+                if (material != null) materials.Add(material);
+
+        foreach (Renderer renderer in root.GetComponentsInChildren<Renderer>(true))
+        {
+            Material[] rendererMaterials = renderer.sharedMaterials;
+            foreach (Material material in rendererMaterials)
+                if (material != null) materials.Add(material);
+
+            for (int i = 0; i < rendererMaterials.Length; i++)
+            {
+                Material material = rendererMaterials[i];
+                if (material == null) continue;
+                bool alsoInServantList = servant != null && servant.Materials.Contains(material);
+                Debug.Log("[FGO MaterialDiag][" + stage + "] Renderer=" +
+                    GetHierarchyPath(renderer.transform) + " slot=" + i +
+                    " material=" + material.name + " materialId=" + material.GetInstanceID() +
+                    " inServantMaterials=" + alsoInServantList, renderer);
+            }
+        }
+
+        foreach (Material material in materials)
+        {
+            string textureDetails = "";
+            foreach (string propertyName in material.GetTexturePropertyNames())
+            {
+                Texture texture = material.GetTexture(propertyName);
+                textureDetails += " [" + propertyName + "=" +
+                    (texture != null
+                        ? texture.name + "#" + texture.GetInstanceID()
+                        : "NULL") + "]";
+            }
+
+            Debug.Log("[FGO MaterialDiag][" + stage + "] Material=" +
+                material.name + " id=" + material.GetInstanceID() +
+                " shader=" + (material.shader != null ? material.shader.name : "NULL") +
+                textureDetails, material);
+        }
+    }
+
+    private static string GetHierarchyPath(Transform transform)
+    {
+        string path = transform.name;
+        while (transform.parent != null)
+        {
+            transform = transform.parent;
+            path = transform.name + "/" + path;
+        }
+        return path;
+    }
+
+    private static List<string> ExportShaderDependencies(
+        string assetFolder,
+        Dictionary<UnityEngine.Object, UnityEngine.Object> assetMap)
+    {
+        List<string> dependencies = new List<string>();
+        HashSet<Shader> processedShaders = new HashSet<Shader>();
+        string shaderFolder = assetFolder + "/Shaders";
+        bool shaderFolderCreated = false;
+
+        foreach (KeyValuePair<UnityEngine.Object, UnityEngine.Object> pair in assetMap)
+        {
+            Material sourceMaterial = pair.Key as Material;
+            Material exportedMaterial = pair.Value as Material;
+            if (sourceMaterial == null || exportedMaterial == null || sourceMaterial.shader == null)
+                continue;
+
+            Shader sourceShader = sourceMaterial.shader;
+            if (!processedShaders.Add(sourceShader))
+                continue;
+
+            string shaderName = sourceShader.name;
+            if (shaderName != "FateShader3Compatible" &&
+                shaderName != "FateScreenshotShaderCompatible")
+            {
+                string externalPath = AssetDatabase.GetAssetPath(sourceShader);
+                if (!string.IsNullOrEmpty(externalPath))
+                {
+                    throw new InvalidOperationException(
+                        "发现尚未纳入独立导出的项目 Shader：" + shaderName +
+                        "（" + externalPath + "）。为避免生成不完整资产，本次导出已停止。");
+                }
+
+                dependencies.Add(shaderName + " (Unity built-in)");
+                continue;
+            }
+
+            string sourcePath = AssetDatabase.GetAssetPath(sourceShader);
+            if (string.IsNullOrEmpty(sourcePath) || !File.Exists(Path.GetFullPath(sourcePath)))
+            {
+                throw new InvalidOperationException(
+                    "无法定位 FateViewer Shader 源文件：" + shaderName);
+            }
+
+            if (!shaderFolderCreated)
+            {
+                string guid = AssetDatabase.CreateFolder(assetFolder, "Shaders");
+                if (string.IsNullOrEmpty(guid))
+                    throw new InvalidOperationException("无法创建 Shader 导出目录：" + shaderFolder);
+                shaderFolderCreated = true;
+            }
+
+            string exportedShaderName = "FGO/Standalone/" + shaderName;
+            string destinationPath = shaderFolder + "/" + shaderName + ".shader";
+            string sourceText = File.ReadAllText(Path.GetFullPath(sourcePath));
+            string sourceDeclaration = "Shader \"" + shaderName + "\"";
+            string exportedDeclaration = "Shader \"" + exportedShaderName + "\"";
+            if (!sourceText.Contains(sourceDeclaration))
+            {
+                throw new InvalidOperationException(
+                    "Shader 源文件中未找到预期声明：" + sourceDeclaration);
+            }
+
+            string exportedText = sourceText.Replace(sourceDeclaration, exportedDeclaration);
+            File.WriteAllText(Path.GetFullPath(destinationPath), exportedText);
+            AssetDatabase.ImportAsset(
+                destinationPath,
+                ImportAssetOptions.ForceSynchronousImport);
+
+            Shader exportedShader = AssetDatabase.LoadAssetAtPath<Shader>(destinationPath);
+            if (exportedShader == null)
+            {
+                throw new InvalidOperationException(
+                    "导出的 Shader 无法被 Unity 导入：" + destinationPath);
+            }
+
+            foreach (KeyValuePair<UnityEngine.Object, UnityEngine.Object> materialPair in assetMap)
+            {
+                Material source = materialPair.Key as Material;
+                Material target = materialPair.Value as Material;
+                if (source != null && target != null && source.shader == sourceShader)
+                    target.shader = exportedShader;
+            }
+
+            dependencies.Add(
+                exportedShaderName + " <- " + sourcePath);
+        }
+
+        return dependencies;
+    }
+
+    private static int ExportMeshes(
+        GameObject root,
+        string folder,
+        Dictionary<UnityEngine.Object, UnityEngine.Object> assetMap)
+    {
+        HashSet<Mesh> meshes = new HashSet<Mesh>();
         foreach (MeshFilter filter in root.GetComponentsInChildren<MeshFilter>(true))
-            if (filter.sharedMesh != null) { ExportObject(filter.sharedMesh, folder, remap); count++; }
+            if (filter.sharedMesh != null) meshes.Add(filter.sharedMesh);
         foreach (SkinnedMeshRenderer renderer in root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
-            if (renderer.sharedMesh != null) { ExportObject(renderer.sharedMesh, folder, remap); count++; }
-        return count;
+            if (renderer.sharedMesh != null) meshes.Add(renderer.sharedMesh);
+
+        foreach (Mesh mesh in meshes)
+            ExportObject(mesh, folder, assetMap);
+
+        return meshes.Count;
     }
 
-    private static int ExportTextures(IEnumerable<Texture2D> textures, string folder, Dictionary<UnityEngine.Object, UnityEngine.Object> remap)
+    private static int ExportTextures(
+        FateServantContainer servant,
+        GameObject root,
+        string folder,
+        Dictionary<UnityEngine.Object, UnityEngine.Object> assetMap)
     {
-        int count = 0;
+        HashSet<Texture2D> textures = new HashSet<Texture2D>(
+            servant.Textures.Where(texture => texture != null));
+
+        foreach (Renderer renderer in root.GetComponentsInChildren<Renderer>(true))
+        {
+            foreach (Material material in renderer.sharedMaterials)
+            {
+                if (material == null) continue;
+                foreach (string propertyName in material.GetTexturePropertyNames())
+                {
+                    Texture2D texture = material.GetTexture(propertyName) as Texture2D;
+                    if (texture != null) textures.Add(texture);
+                }
+            }
+        }
+
         foreach (Texture2D texture in textures)
-            if (texture != null) { ExportObject(texture, folder, remap); count++; }
-        foreach (Renderer renderer in Selection.activeGameObject.GetComponent<FateServantContainer>().BodyMain.GetComponentsInChildren<Renderer>(true))
-            foreach (Material material in renderer.sharedMaterials)
-                if (material != null)
-                    foreach (string property in material.GetTexturePropertyNames())
-                    {
-                        Texture2D texture = material.GetTexture(property) as Texture2D;
-                        if (texture != null && !remap.ContainsKey(texture)) { ExportObject(texture, folder, remap); count++; }
-                    }
-        return count;
+            ExportObject(texture, folder, assetMap);
+
+        return textures.Count;
     }
 
-    private static int ExportMaterials(IEnumerable<Material> materials, string folder, Dictionary<UnityEngine.Object, UnityEngine.Object> remap)
+    private static int ExportMaterials(
+        FateServantContainer servant,
+        GameObject root,
+        string folder,
+        Dictionary<UnityEngine.Object, UnityEngine.Object> assetMap)
     {
-        HashSet<Material> all = new HashSet<Material>(materials.Where(m => m != null));
-        FateServantContainer servant = Selection.activeGameObject.GetComponent<FateServantContainer>();
-        foreach (Renderer renderer in servant.BodyMain.GetComponentsInChildren<Renderer>(true))
+        HashSet<Material> materials = new HashSet<Material>(
+            servant.Materials.Where(material => material != null));
+
+        foreach (Renderer renderer in root.GetComponentsInChildren<Renderer>(true))
             foreach (Material material in renderer.sharedMaterials)
-                if (material != null) all.Add(material);
-        foreach (Material material in all) ExportObject(material, folder, remap);
-        return all.Count;
+                if (material != null) materials.Add(material);
+
+        foreach (Material material in materials)
+            ExportObject(material, folder, assetMap);
+
+        return materials.Count;
     }
 
-    private static int ExportClips(IEnumerable<SimpleAnimation.State> states, string folder, Dictionary<UnityEngine.Object, UnityEngine.Object> remap)
+    private static List<FGOCharacterAnimationPlayer.ClipEntry> ExportAnimationClips(
+        IEnumerable<SimpleAnimation.State> states,
+        string folder,
+        Dictionary<UnityEngine.Object, UnityEngine.Object> assetMap)
     {
-        HashSet<AnimationClip> clips = new HashSet<AnimationClip>();
+        List<FGOCharacterAnimationPlayer.ClipEntry> result =
+            new List<FGOCharacterAnimationPlayer.ClipEntry>();
+
         foreach (SimpleAnimation.State state in states)
-            if (state != null && state.clip != null) clips.Add(state.clip);
-        foreach (AnimationClip clip in clips) ExportObject(clip, folder, remap);
-        return clips.Count;
+        {
+            if (state == null || state.clip == null || string.IsNullOrEmpty(state.name))
+                continue;
+
+            AnimationClip exportedClip = ExportObject(state.clip, folder, assetMap);
+            result.Add(new FGOCharacterAnimationPlayer.ClipEntry
+            {
+                stateName = state.name,
+                clip = exportedClip
+            });
+        }
+
+        return result;
     }
 
-    private static void ExportObject<T>(T source, string folder, Dictionary<UnityEngine.Object, UnityEngine.Object> remap)
+    private static string BuildAnimationClipIntegrityReport(
+        Dictionary<UnityEngine.Object, UnityEngine.Object> assetMap)
+    {
+        List<string> lines = new List<string>();
+        int clipCount = 0;
+        int mismatchCount = 0;
+
+        foreach (KeyValuePair<UnityEngine.Object, UnityEngine.Object> pair in assetMap)
+        {
+            AnimationClip source = pair.Key as AnimationClip;
+            AnimationClip exported = pair.Value as AnimationClip;
+            if (source == null || exported == null)
+                continue;
+
+            clipCount++;
+            EditorCurveBinding[] sourceFloat = AnimationUtility.GetCurveBindings(source);
+            EditorCurveBinding[] exportedFloat = AnimationUtility.GetCurveBindings(exported);
+            EditorCurveBinding[] sourceObject = AnimationUtility.GetObjectReferenceCurveBindings(source);
+            EditorCurveBinding[] exportedObject = AnimationUtility.GetObjectReferenceCurveBindings(exported);
+            AnimationEvent[] sourceEvents = AnimationUtility.GetAnimationEvents(source);
+            AnimationEvent[] exportedEvents = AnimationUtility.GetAnimationEvents(exported);
+
+            bool matches =
+                sourceFloat.Length == exportedFloat.Length &&
+                sourceObject.Length == exportedObject.Length &&
+                sourceEvents.Length == exportedEvents.Length &&
+                Mathf.Approximately(source.length, exported.length) &&
+                Mathf.Approximately(source.frameRate, exported.frameRate) &&
+                source.wrapMode == exported.wrapMode &&
+                source.legacy == exported.legacy;
+
+            if (!matches)
+                mismatchCount++;
+
+            lines.Add(
+                source.name + " -> " + exported.name +
+                " | float curves " + sourceFloat.Length + "/" + exportedFloat.Length +
+                " | object curves " + sourceObject.Length + "/" + exportedObject.Length +
+                " | events " + sourceEvents.Length + "/" + exportedEvents.Length +
+                " | length " + source.length.ToString("0.000") + "/" + exported.length.ToString("0.000") +
+                " | frameRate " + source.frameRate.ToString("0.##") + "/" + exported.frameRate.ToString("0.##") +
+                " | wrapMode " + source.wrapMode + "/" + exported.wrapMode +
+                " | legacy " + source.legacy + "/" + exported.legacy +
+                " | " + (matches ? "MATCH" : "MISMATCH"));
+        }
+
+        lines.Insert(0, "Animation clips checked: " + clipCount + " | metadata/count mismatches: " + mismatchCount);
+        return lines.Count == 1 ? lines[0] + "\nNo exported AnimationClip assets found." : string.Join("\n", lines);
+    }
+
+    private static string BuildMaterialTextureIntegrityReport(
+        Dictionary<UnityEngine.Object, UnityEngine.Object> assetMap)
+    {
+        List<string> lines = new List<string>();
+        int checkedSlots = 0;
+        int mismatchCount = 0;
+        int missingMapCount = 0;
+
+        foreach (KeyValuePair<UnityEngine.Object, UnityEngine.Object> pair in assetMap)
+        {
+            Material source = pair.Key as Material;
+            Material exported = pair.Value as Material;
+            if (source == null || exported == null)
+                continue;
+
+            foreach (string propertyName in source.GetTexturePropertyNames())
+            {
+                checkedSlots++;
+                Texture sourceTexture = source.GetTexture(propertyName);
+                bool targetHasProperty = exported.HasProperty(propertyName);
+                Texture exportedTexture = targetHasProperty
+                    ? exported.GetTexture(propertyName)
+                    : null;
+
+                UnityEngine.Object mappedObject = null;
+                bool hasMapping = sourceTexture == null ||
+                    assetMap.TryGetValue(sourceTexture, out mappedObject);
+                Texture expectedTexture = mappedObject as Texture;
+                string status;
+
+                if (!targetHasProperty)
+                    status = "TARGET_PROPERTY_MISSING";
+                else if (sourceTexture != null && !hasMapping)
+                {
+                    status = "TEXTURE_NOT_EXPORTED";
+                    missingMapCount++;
+                }
+                else if (exportedTexture != expectedTexture)
+                    status = "REFERENCE_MISMATCH";
+                else
+                    status = "MATCH";
+
+                if (status != "MATCH")
+                    mismatchCount++;
+
+                lines.Add(
+                    source.name + " -> " + exported.name +
+                    " | property=" + propertyName +
+                    " | source=" + (sourceTexture != null ? sourceTexture.name + "#" + sourceTexture.GetInstanceID() : "NULL") +
+                    " | expected=" + (expectedTexture != null ? expectedTexture.name + "#" + expectedTexture.GetInstanceID() : "NULL") +
+                    " | actual=" + (exportedTexture != null ? exportedTexture.name + "#" + exportedTexture.GetInstanceID() : "NULL") +
+                    " | " + status);
+            }
+        }
+
+        lines.Insert(0,
+            "Texture slots checked: " + checkedSlots +
+            " | mismatches: " + mismatchCount +
+            " | textures without exported mapping: " + missingMapCount);
+        return string.Join("\n", lines);
+    }
+
+    private static string BuildAnimatorSettingsReport(Animator source, Animator exported)
+    {
+        if (source == null || exported == null)
+            return "Source or exported Animator is missing.";
+
+        Avatar sourceAvatar = source.avatar;
+        Avatar exportedAvatar = exported.avatar;
+
+        return
+            "Source Animator: " + GetHierarchyPath(source.transform) + "\n" +
+            "Exported Animator: " + GetHierarchyPath(exported.transform) + "\n" +
+            "Enabled: source=" + source.enabled + ", exported=" + exported.enabled + "\n" +
+            "Update Mode: source=" + source.updateMode + ", exported=" + exported.updateMode + "\n" +
+            "Culling Mode: source=" + source.cullingMode + ", exported=" + exported.cullingMode + "\n" +
+            "Apply Root Motion: source=" + source.applyRootMotion + ", exported=" + exported.applyRootMotion + "\n" +
+            "Speed: source=" + source.speed + ", exported=" + exported.speed + "\n" +
+            "Avatar: source=" + (sourceAvatar != null ? sourceAvatar.name : "None") +
+            ", exported=" + (exportedAvatar != null ? exportedAvatar.name : "None") + "\n" +
+            "Avatar Valid: source=" + (sourceAvatar != null && sourceAvatar.isValid) +
+            ", exported=" + (exportedAvatar != null && exportedAvatar.isValid) + "\n" +
+            "Avatar Human: source=" + (sourceAvatar != null && sourceAvatar.isHuman) +
+            ", exported=" + (exportedAvatar != null && exportedAvatar.isHuman);
+    }
+
+    private static string BuildAnimationCurveBindingReport(
+        IEnumerable<FGOCharacterAnimationPlayer.ClipEntry> states,
+        Transform exportedRoot)
+    {
+        List<string> lines = new List<string>();
+        int totalFloatBindings = 0;
+        int totalObjectBindings = 0;
+        int missingPathCount = 0;
+
+        foreach (FGOCharacterAnimationPlayer.ClipEntry entry in states)
+        {
+            if (entry == null || entry.clip == null)
+                continue;
+
+            EditorCurveBinding[] floatBindings = AnimationUtility.GetCurveBindings(entry.clip);
+            EditorCurveBinding[] objectBindings = AnimationUtility.GetObjectReferenceCurveBindings(entry.clip);
+            totalFloatBindings += floatBindings.Length;
+            totalObjectBindings += objectBindings.Length;
+
+            lines.Add(entry.stateName + " / " + entry.clip.name +
+                " | float curves=" + floatBindings.Length +
+                " | object-reference curves=" + objectBindings.Length);
+
+            foreach (EditorCurveBinding binding in floatBindings)
+            {
+                if (HasAnimationBindingPath(exportedRoot, binding.path))
+                    continue;
+
+                missingPathCount++;
+                lines.Add("  MISSING FLOAT PATH: " + (string.IsNullOrEmpty(binding.path) ? "<root>" : binding.path) +
+                    " | property=" + binding.propertyName + " | type=" + binding.type);
+            }
+
+            foreach (EditorCurveBinding binding in objectBindings)
+            {
+                if (HasAnimationBindingPath(exportedRoot, binding.path))
+                    continue;
+
+                missingPathCount++;
+                lines.Add("  MISSING OBJECT PATH: " + (string.IsNullOrEmpty(binding.path) ? "<root>" : binding.path) +
+                    " | property=" + binding.propertyName + " | type=" + binding.type);
+            }
+        }
+
+        lines.Insert(0,
+            "Total float curves: " + totalFloatBindings +
+            " | total object-reference curves: " + totalObjectBindings +
+            " | missing hierarchy paths: " + missingPathCount);
+
+        return lines.Count == 1 ? lines[0] + "\nNo animation states to audit." : string.Join("\n", lines);
+    }
+
+    private static bool HasAnimationBindingPath(Transform root, string path)
+    {
+        if (root == null)
+            return false;
+
+        if (string.IsNullOrEmpty(path))
+            return true;
+
+        return root.Find(path) != null;
+    }
+
+    private static string BuildAnimationEventReport(
+        IEnumerable<FGOCharacterAnimationPlayer.ClipEntry> states,
+        Dictionary<UnityEngine.Object, UnityEngine.Object> assetMap)
+    {
+        List<string> lines = new List<string>();
+        foreach (FGOCharacterAnimationPlayer.ClipEntry entry in states)
+        {
+            if (entry == null || entry.clip == null)
+                continue;
+
+            AnimationEvent[] events = entry.clip.events;
+            if (events == null || events.Length == 0)
+            {
+                lines.Add(entry.stateName + " / " + entry.clip.name + ": No events");
+                continue;
+            }
+
+            foreach (AnimationEvent animationEvent in events)
+            {
+                UnityEngine.Object reference = animationEvent.objectReferenceParameter;
+                string referenceStatus = reference == null
+                    ? "None"
+                    : (assetMap.ContainsKey(reference)
+                        ? "Source has an exported copy, but event reference remapping is not yet implemented"
+                        : "UNMAPPED EXTERNAL REFERENCE");
+
+                lines.Add(
+                    entry.stateName + " / " + entry.clip.name +
+                    " | time=" + animationEvent.time.ToString("0.000") +
+                    " | function=" + animationEvent.functionName +
+                    " | string=" + animationEvent.stringParameter +
+                    " | object=" + (reference != null
+                        ? reference.name + " (" + reference.GetType().Name + ")"
+                        : "None") +
+                    " | reference status=" + referenceStatus);
+            }
+        }
+
+        return lines.Count == 0 ? "No animation states to audit." : string.Join("\n", lines);
+    }
+
+
+    private static string FindInitialAnimation(
+        List<FGOCharacterAnimationPlayer.ClipEntry> states)
+    {
+        FGOCharacterAnimationPlayer.ClipEntry initial = states.FirstOrDefault(entry =>
+            string.Equals(entry.stateName, "Default", StringComparison.OrdinalIgnoreCase));
+        if (initial == null)
+            initial = states.FirstOrDefault(entry =>
+                string.Equals(entry.stateName, "wait", StringComparison.OrdinalIgnoreCase));
+        if (initial == null)
+            initial = states.FirstOrDefault();
+
+        if (initial == null || initial.clip == null)
+            throw new InvalidOperationException("找不到有效的初始动画状态。");
+
+        return initial.stateName;
+    }
+
+    private static AnimatorController CreateStandaloneAnimatorController(
+        string folder,
+        out AnimationClip slotClip)
+    {
+        string slotPath = AssetDatabase.GenerateUniqueAssetPath(
+            folder + "/" + AnimationSlotName + ".anim");
+        slotClip = new AnimationClip();
+        slotClip.name = AnimationSlotName;
+        AssetDatabase.CreateAsset(slotClip, slotPath);
+
+        string controllerPath = AssetDatabase.GenerateUniqueAssetPath(
+            folder + "/FGO_Standalone.controller");
+        AnimatorController controller =
+            AnimatorController.CreateAnimatorControllerAtPath(controllerPath);
+
+        AnimatorStateMachine stateMachine = controller.layers[0].stateMachine;
+        ChildAnimatorState[] existingStates = stateMachine.states;
+        foreach (ChildAnimatorState childState in existingStates)
+            if (childState.state != null)
+                stateMachine.RemoveState(childState.state);
+
+        AnimatorState animationState = stateMachine.AddState(AnimatorStateName);
+        animationState.motion = slotClip;
+        stateMachine.defaultState = animationState;
+
+        EditorUtility.SetDirty(controller);
+        AssetDatabase.SaveAssets();
+        return controller;
+    }
+
+    private static T ExportObject<T>(
+        T source,
+        string folder,
+        Dictionary<UnityEngine.Object, UnityEngine.Object> assetMap)
         where T : UnityEngine.Object
     {
-        if (source == null || remap.ContainsKey(source)) return;
-        if (string.IsNullOrEmpty(folder) || !AssetDatabase.IsValidFolder(folder))
-            throw new InvalidOperationException("导出目标文件夹无效：" + (folder ?? "<null>"));
+        if (source == null) return null;
+
+        UnityEngine.Object existing;
+        if (assetMap.TryGetValue(source, out existing))
+            return existing as T;
+
+        if (source is Material)
+            LogSingleMaterialReferenceDiagnostics((Material)(UnityEngine.Object)source, "EXPORT_OBJECT_SOURCE");
 
         T copy;
         if (source is Texture2D)
             copy = (T)(UnityEngine.Object)CopyTextureReadable((Texture2D)(UnityEngine.Object)source);
         else
             copy = UnityEngine.Object.Instantiate(source);
+
         copy.name = string.IsNullOrEmpty(source.name) ? source.GetType().Name : source.name;
-        string extension = source is AnimationClip ? ".anim" : source is Material ? ".mat" : ".asset";
-        string basePath = folder.TrimEnd('/') + "/" + MakeSafeName(copy.name) + extension;
-        string path = basePath;
-        if (AssetDatabase.LoadMainAssetAtPath(path) != null)
-            AssetDatabase.DeleteAsset(path);
-        if (string.IsNullOrEmpty(path))
-        {
-            UnityEngine.Object.DestroyImmediate(copy);
-            throw new InvalidOperationException("Unity 无法生成资产路径。目标文件夹：" + folder + "；原始对象：" + source.GetType().Name + " / " + source.name);
-        }
+
+        if (source is Material)
+            LogSingleMaterialReferenceDiagnostics((Material)(UnityEngine.Object)copy, "EXPORT_OBJECT_INSTANTIATED");
+
+        string extension = source is AnimationClip ? ".anim" :
+            source is Material ? ".mat" :
+            source is Mesh ? ".asset" :
+            source is Avatar ? ".asset" : ".asset";
+        string path = AssetDatabase.GenerateUniqueAssetPath(
+            folder.TrimEnd('/') + "/" + MakeSafeName(copy.name) + extension);
 
         try
         {
             AssetDatabase.CreateAsset(copy, path);
-            remap.Add(source, copy);
+            assetMap.Add(source, copy);
+            if (copy is Material)
+                LogSingleMaterialReferenceDiagnostics((Material)(UnityEngine.Object)copy, "EXPORT_OBJECT_ASSET_CREATED");
+            return copy;
         }
         catch
         {
@@ -221,22 +832,29 @@ public static class FGOCharacterAssetExporter
         }
     }
 
-    // AssetBundles often contain GPU-only textures with Read/Write disabled.
-    // Blit through a temporary RenderTexture so they can be exported as readable assets.
     private static Texture2D CopyTextureReadable(Texture2D source)
     {
         RenderTexture temporary = RenderTexture.GetTemporary(
-            source.width, source.height, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Default);
+            source.width,
+            source.height,
+            0,
+            RenderTextureFormat.ARGB32,
+            RenderTextureReadWrite.Default);
         RenderTexture previous = RenderTexture.active;
         Texture2D copy = null;
+
         try
         {
             Graphics.Blit(source, temporary);
             RenderTexture.active = temporary;
             copy = new Texture2D(source.width, source.height, TextureFormat.RGBA32, false);
             copy.name = source.name;
+            copy.filterMode = source.filterMode;
+            copy.wrapMode = source.wrapMode;
+            copy.anisoLevel = source.anisoLevel;
             copy.ReadPixels(new Rect(0, 0, source.width, source.height), 0, 0, false);
             copy.Apply(false, false);
+            LogTextureCopyDiagnostics(source, copy);
             return copy;
         }
         catch
@@ -251,26 +869,71 @@ public static class FGOCharacterAssetExporter
         }
     }
 
-    // Rebuild the hierarchy instead of cloning it. This deliberately avoids carrying
-    // invalid serialized script entries (including non-MonoBehaviour script records)
-    // from AssetBundle instances into the exported Prefab.
+
+    private static void LogTextureCopyDiagnostics(Texture2D source, Texture2D copy)
+    {
+        if (source == null || copy == null) return;
+
+        Color32[] pixels = copy.GetPixels32();
+        byte minAlpha = 255;
+        byte maxAlpha = 0;
+        byte minRed = 255;
+        byte maxRed = 0;
+        int transparentPixels = 0;
+        int opaquePixels = 0;
+        int partialAlphaPixels = 0;
+        int zeroRedPixels = 0;
+        int fullRedPixels = 0;
+        int partialRedPixels = 0;
+
+        foreach (Color32 pixel in pixels)
+        {
+            if (pixel.a < minAlpha) minAlpha = pixel.a;
+            if (pixel.a > maxAlpha) maxAlpha = pixel.a;
+            if (pixel.a == 0) transparentPixels++;
+            else if (pixel.a == 255) opaquePixels++;
+            else partialAlphaPixels++;
+
+            if (pixel.r < minRed) minRed = pixel.r;
+            if (pixel.r > maxRed) maxRed = pixel.r;
+            if (pixel.r == 0) zeroRedPixels++;
+            else if (pixel.r == 255) fullRedPixels++;
+            else partialRedPixels++;
+        }
+
+        Debug.Log(
+            "[FGO Export][TextureCopy] " + source.name +
+            " source=" + source.width + "x" + source.height +
+            " format=" + source.format +
+            " mipmaps=" + source.mipmapCount +
+            " copy=" + copy.width + "x" + copy.height +
+            " format=" + copy.format +
+            " alphaMin=" + minAlpha +
+            " alphaMax=" + maxAlpha +
+            " transparent=" + transparentPixels +
+            " partial=" + partialAlphaPixels +
+            " opaque=" + opaquePixels +
+            " redMin=" + minRed +
+            " redMax=" + maxRed +
+            " redZero=" + zeroRedPixels +
+            " redPartial=" + partialRedPixels +
+            " redFull=" + fullRedPixels);
+    }
+
     private static GameObject BuildCleanExportHierarchy(
         GameObject sourceRoot,
-        out Dictionary<UnityEngine.Object, UnityEngine.Object> objectMap)
+        out Dictionary<UnityEngine.Object, UnityEngine.Object> objectMap,
+        out List<string> componentAudit)
     {
         objectMap = new Dictionary<UnityEngine.Object, UnityEngine.Object>();
-        Dictionary<Transform, Transform> transformMap = new Dictionary<Transform, Transform>();
-        Dictionary<Component, Component> componentMap = new Dictionary<Component, Component>();
-
+        componentAudit = new List<string>();
         GameObject targetRoot = new GameObject(sourceRoot.name);
         objectMap[sourceRoot] = targetRoot;
-        CopyTransformValues(sourceRoot.transform, targetRoot.transform);
         objectMap[sourceRoot.transform] = targetRoot.transform;
-        transformMap[sourceRoot.transform] = targetRoot.transform;
+        CopyTransformValues(sourceRoot.transform, targetRoot.transform);
 
-        CopyChildrenRecursive(sourceRoot.transform, targetRoot.transform, objectMap, transformMap, componentMap);
+        CopyChildrenRecursive(sourceRoot.transform, targetRoot.transform, objectMap, componentAudit);
         RemapSerializedReferences(objectMap);
-
         return targetRoot;
     }
 
@@ -278,8 +941,7 @@ public static class FGOCharacterAssetExporter
         Transform sourceParent,
         Transform targetParent,
         Dictionary<UnityEngine.Object, UnityEngine.Object> objectMap,
-        Dictionary<Transform, Transform> transformMap,
-        Dictionary<Component, Component> componentMap)
+        List<string> componentAudit)
     {
         foreach (Transform sourceChild in sourceParent)
         {
@@ -289,38 +951,52 @@ public static class FGOCharacterAssetExporter
             CopyTransformValues(sourceChild, targetTransform);
             objectMap[sourceChild.gameObject] = targetObject;
             objectMap[sourceChild] = targetTransform;
-            transformMap[sourceChild] = targetTransform;
-
-            CopyChildrenRecursive(sourceChild, targetTransform, objectMap, transformMap, componentMap);
+            CopyChildrenRecursive(sourceChild, targetTransform, objectMap, componentAudit);
         }
 
-        GameObject targetGameObject = targetParent.gameObject;
-        GameObject sourceGameObject = sourceParent.gameObject;
-        foreach (Component sourceComponent in sourceGameObject.GetComponents<Component>())
+        GameObject sourceObject = sourceParent.gameObject;
+        GameObject targetObjectForComponents = targetParent.gameObject;
+        foreach (Component sourceComponent in sourceObject.GetComponents<Component>())
         {
-            // Null entries are intentionally skipped: these are where Unity exposes
-            // unsupported/missing serialized script records on some AssetBundle objects.
-            if (sourceComponent == null) continue;
-            Type type = sourceComponent.GetType();
-            if (type == typeof(Transform) || type == typeof(SimpleAnimation)) continue;
-            if (type.Name == "BattleServantDeadComponent") continue;
+            if (sourceComponent == null)
+            {
+                componentAudit.Add(GetHierarchyPath(sourceParent) + " | MISSING SCRIPT COMPONENT");
+                continue;
+            }
+
+            Type componentType = sourceComponent.GetType();
+            if (componentType == typeof(Transform))
+            {
+                componentAudit.Add(GetHierarchyPath(sourceParent) + " | Transform | COPIED AS HIERARCHY");
+                continue;
+            }
+            if (componentType == typeof(SimpleAnimation))
+            {
+                componentAudit.Add(GetHierarchyPath(sourceParent) + " | SimpleAnimation | INTENTIONALLY EXCLUDED (clips exported separately)");
+                continue;
+            }
+            if (componentType.Name == "BattleServantDeadComponent")
+            {
+                componentAudit.Add(GetHierarchyPath(sourceParent) + " | " + componentType.FullName + " | INTENTIONALLY EXCLUDED");
+                continue;
+            }
 
             try
             {
-                Component targetComponent = targetGameObject.AddComponent(type);
+                Component targetComponent = targetObjectForComponents.AddComponent(componentType);
                 if (targetComponent == null)
-                {
-                    Debug.LogWarning("[FGO Export] Could not add component: " + type.FullName +
-                        " on " + GetHierarchyPath(sourceParent));
                     continue;
-                }
+
                 EditorUtility.CopySerialized(sourceComponent, targetComponent);
                 objectMap[sourceComponent] = targetComponent;
-                componentMap[sourceComponent] = targetComponent;
+                componentAudit.Add(GetHierarchyPath(sourceParent) + " | " + componentType.FullName + " | COPIED");
             }
             catch (Exception exception)
             {
-                Debug.LogWarning("[FGO Export] Skipped component " + type.FullName +
+                componentAudit.Add(GetHierarchyPath(sourceParent) + " | " + componentType.FullName +
+                    " | FAILED: " + exception.Message);
+                Debug.LogWarning(
+                    "[FGO Export] Failed to copy component " + componentType.FullName +
                     " on " + GetHierarchyPath(sourceParent) + ": " + exception.Message);
             }
         }
@@ -331,21 +1007,10 @@ public static class FGOCharacterAssetExporter
         target.localPosition = source.localPosition;
         target.localRotation = source.localRotation;
         target.localScale = source.localScale;
-        target.localEulerAngles = source.localEulerAngles;
     }
 
-    private static string GetHierarchyPath(Transform transform)
-    {
-        string path = transform.name;
-        while (transform.parent != null)
-        {
-            transform = transform.parent;
-            path = transform.name + "/" + path;
-        }
-        return path;
-    }
-
-    private static void RemapSerializedReferences(Dictionary<UnityEngine.Object, UnityEngine.Object> objectMap)
+    private static void RemapSerializedReferences(
+        Dictionary<UnityEngine.Object, UnityEngine.Object> objectMap)
     {
         foreach (UnityEngine.Object targetObject in objectMap.Values.Distinct())
         {
@@ -355,62 +1020,146 @@ public static class FGOCharacterAssetExporter
             SerializedObject serializedObject = new SerializedObject(component);
             SerializedProperty property = serializedObject.GetIterator();
             bool changed = false;
+
             while (property.Next(true))
             {
-                if (property.propertyType != SerializedPropertyType.ObjectReference) continue;
+                if (property.propertyType != SerializedPropertyType.ObjectReference)
+                    continue;
+
                 UnityEngine.Object reference = property.objectReferenceValue;
-                if (reference != null && objectMap.TryGetValue(reference, out UnityEngine.Object replacement))
+                UnityEngine.Object replacement;
+                if (reference != null && objectMap.TryGetValue(reference, out replacement))
                 {
                     property.objectReferenceValue = replacement;
                     changed = true;
                 }
             }
-            if (changed) serializedObject.ApplyModifiedPropertiesWithoutUndo();
+
+            if (changed)
+                serializedObject.ApplyModifiedPropertiesWithoutUndo();
         }
     }
 
-    private static void RemapHierarchyAssets(GameObject root, Dictionary<UnityEngine.Object, UnityEngine.Object> remap)
+    private static void RemapSerializedAssetReferences(
+        GameObject root,
+        Dictionary<UnityEngine.Object, UnityEngine.Object> assetMap)
+    {
+        int remappedReferenceCount = 0;
+
+        foreach (Component component in root.GetComponentsInChildren<Component>(true))
+        {
+            if (component == null)
+                continue;
+
+            SerializedObject serializedObject = new SerializedObject(component);
+            SerializedProperty property = serializedObject.GetIterator();
+            bool changed = false;
+
+            while (property.Next(true))
+            {
+                if (property.propertyType != SerializedPropertyType.ObjectReference)
+                    continue;
+
+                UnityEngine.Object sourceReference = property.objectReferenceValue;
+                UnityEngine.Object exportedReference;
+                if (sourceReference == null ||
+                    !assetMap.TryGetValue(sourceReference, out exportedReference))
+                    continue;
+
+                property.objectReferenceValue = exportedReference;
+                changed = true;
+                remappedReferenceCount++;
+
+                Debug.Log(
+                    "[FGO Export][SerializedAssetRemap] component=" +
+                    GetHierarchyPath(component.transform) +
+                    " type=" + component.GetType().Name +
+                    " property=" + property.propertyPath +
+                    " source=" + sourceReference.name +
+                    " exported=" + exportedReference.name,
+                    component);
+            }
+
+            if (changed)
+                serializedObject.ApplyModifiedPropertiesWithoutUndo();
+        }
+
+        Debug.Log(
+            "[FGO Export][SerializedAssetRemap] completed references=" +
+            remappedReferenceCount,
+            root);
+    }
+
+    private static void RemapHierarchyAssets(
+        GameObject root,
+        Dictionary<UnityEngine.Object, UnityEngine.Object> assetMap)
     {
         foreach (MeshFilter filter in root.GetComponentsInChildren<MeshFilter>(true))
-            if (filter.sharedMesh != null && remap.ContainsKey(filter.sharedMesh))
-                filter.sharedMesh = (Mesh)remap[filter.sharedMesh];
-        foreach (SkinnedMeshRenderer renderer in root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
-            if (renderer.sharedMesh != null && remap.ContainsKey(renderer.sharedMesh))
-                renderer.sharedMesh = (Mesh)remap[renderer.sharedMesh];
-        foreach (Material material in remap.Values.OfType<Material>())
         {
-            foreach (string property in material.GetTexturePropertyNames())
+            if (filter.sharedMesh == null) continue;
+            UnityEngine.Object replacement;
+            if (assetMap.TryGetValue(filter.sharedMesh, out replacement))
+                filter.sharedMesh = replacement as Mesh;
+        }
+
+        foreach (SkinnedMeshRenderer renderer in root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+        {
+            if (renderer.sharedMesh != null)
             {
-                Texture texture = material.GetTexture(property);
-                if (texture != null && remap.ContainsKey(texture))
-                    material.SetTexture(property, (Texture)remap[texture]);
+                UnityEngine.Object replacement;
+                if (assetMap.TryGetValue(renderer.sharedMesh, out replacement))
+                    renderer.sharedMesh = replacement as Mesh;
             }
         }
+
+        foreach (Material material in assetMap.Values.OfType<Material>())
+        {
+            foreach (string propertyName in material.GetTexturePropertyNames())
+            {
+                Texture texture = material.GetTexture(propertyName);
+                UnityEngine.Object replacement = null;
+                bool mapped = texture != null && assetMap.TryGetValue(texture, out replacement);
+                Debug.Log(
+                    "[FGO RemapDiag][MaterialTexture] material=" + material.name +
+                    " property=" + propertyName +
+                    " before=" + (texture != null ? texture.name + "#" + texture.GetInstanceID() : "NULL") +
+                    " mapped=" + mapped +
+                    (mapped ? " after=" + replacement.name + "#" + replacement.GetInstanceID() : ""));
+                if (mapped)
+                    material.SetTexture(propertyName, replacement as Texture);
+            }
+        }
+
         foreach (Renderer renderer in root.GetComponentsInChildren<Renderer>(true))
         {
             Material[] materials = renderer.sharedMaterials;
             for (int i = 0; i < materials.Length; i++)
-                if (materials[i] != null && remap.ContainsKey(materials[i]))
-                    materials[i] = (Material)remap[materials[i]];
+            {
+                Material sourceMaterial = materials[i];
+                UnityEngine.Object replacement = null;
+                bool mapped = sourceMaterial != null &&
+                    assetMap.TryGetValue(sourceMaterial, out replacement);
+                Debug.Log(
+                    "[FGO RemapDiag][RendererMaterial] renderer=" + GetHierarchyPath(renderer.transform) +
+                    " slot=" + i +
+                    " before=" + (sourceMaterial != null ? sourceMaterial.name + "#" + sourceMaterial.GetInstanceID() : "NULL") +
+                    " mapped=" + mapped +
+                    (mapped ? " after=" + replacement.name + "#" + replacement.GetInstanceID() : ""));
+                if (mapped)
+                    materials[i] = replacement as Material;
+            }
             renderer.sharedMaterials = materials;
-        }
-    }
-
-    private static void CreateFolders(string path)
-    {
-        string current = "Assets";
-        foreach (string part in path.Substring("Assets/".Length).Split('/'))
-        {
-            string next = current + "/" + part;
-            if (!AssetDatabase.IsValidFolder(next)) AssetDatabase.CreateFolder(current, part);
-            current = next;
         }
     }
 
     private static string MakeSafeName(string value)
     {
-        foreach (char invalid in Path.GetInvalidFileNameChars()) value = value.Replace(invalid, '_');
-        return string.IsNullOrEmpty(value) ? "FGO_Character" : value.Replace('/', '_').Replace('\\', '_');
+        foreach (char invalid in Path.GetInvalidFileNameChars())
+            value = value.Replace(invalid, '_');
+
+        return string.IsNullOrEmpty(value)
+            ? "FGO_Character"
+            : value.Replace('/', '_').Replace('\\', '_');
     }
 }
 #endif

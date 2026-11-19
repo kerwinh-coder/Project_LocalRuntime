@@ -466,6 +466,27 @@ public sealed class FGOCharacterWorkbench : MonoBehaviour
             if (sourceBody == null)
                 throw new InvalidOperationException("Bundle 内没有找到名为 chr 的角色对象。Bundle=" + bundle.name);
 
+            // Use the materials actually referenced by chr renderers as the
+            // authoritative set. This also captures textures referenced by
+            // those materials even if they were not returned as top-level
+            // AssetBundle assets.
+            foreach (Renderer renderer in sourceBody.GetComponentsInChildren<Renderer>(true))
+            {
+                foreach (Material material in renderer.sharedMaterials)
+                {
+                    if (material == null) continue;
+                    if (!servant.Materials.Contains(material))
+                        servant.Materials.Add(material);
+
+                    foreach (string propertyName in material.GetTexturePropertyNames())
+                    {
+                        Texture2D texture = material.GetTexture(propertyName) as Texture2D;
+                        if (texture != null && !servant.Textures.Contains(texture))
+                            servant.Textures.Add(texture);
+                    }
+                }
+            }
+
             ApplyNativeMaterialSetup(servant);
 
             servant.BodyMain = Instantiate(sourceBody, servant.transform);
@@ -557,19 +578,33 @@ public sealed class FGOCharacterWorkbench : MonoBehaviour
                 continue;
             }
 
+            // Capture source texture references before changing shaders. The replacement
+            // shader may expose different defaults, so do not read these values afterward.
+            Texture oldMain = material.HasProperty("_MainTex")
+                ? material.GetTexture("_MainTex")
+                : material.mainTexture;
+            Texture oldAlpha = material.HasProperty("_Alpha")
+                ? material.GetTexture("_Alpha")
+                : null;
+
             if (characterShader != null)
                 material.shader = characterShader;
 
-            Texture oldMain = material.mainTexture;
-            if (oldMain != null)
-            {
-                Texture2D matched = servant.Textures.FirstOrDefault(t => t != null && t.name == oldMain.name);
-                if (matched != null && material.HasProperty("_MainTex"))
-                    material.SetTexture("_MainTex", matched);
+            if (material.HasProperty("_MainTex") && oldMain != null)
+                material.SetTexture("_MainTex", oldMain);
 
-                Texture2D alpha = servant.Textures.FirstOrDefault(t => t != null &&
-                    (t.name == oldMain.name + "a" || t.name == oldMain.name + "_alpha"));
-                if (alpha != null && material.HasProperty("_Alpha"))
+            if (material.HasProperty("_Alpha"))
+            {
+                // Keep an explicitly assigned source alpha texture when available.
+                // Otherwise use FateViewer's conventional sibling texture naming.
+                Texture alpha = oldAlpha;
+                if (alpha == null && oldMain != null)
+                {
+                    alpha = servant.Textures.FirstOrDefault(t => t != null &&
+                        (t.name == oldMain.name + "a" || t.name == oldMain.name + "_alpha"));
+                }
+
+                if (alpha != null)
                     material.SetTexture("_Alpha", alpha);
             }
 
